@@ -7,18 +7,15 @@
 
 import SwiftUI
 
-struct ContentView: View {
-    var body: some View {
-        VStack {
-            Image(systemName: "globe")
-                .imageScale(.large)
-                .foregroundStyle(.tint)
-            Text("Hello, world!")
-        }
-        .padding()
-    }
+struct ContentView: View 
+{
+	var body: some View 
+	{
+		BluetoothManagerView()
+	}
 }
 
 #Preview {
-    ContentView()
+	ContentView()
 }
+
