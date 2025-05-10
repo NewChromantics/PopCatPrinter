@@ -132,6 +132,31 @@ extension CBCharacteristic
 	}
 }
 
+func GetBatteryIconName(percent:Int?) -> String
+{
+	guard let percent else
+	{
+		return "questionmark.app.fill"
+	}
+	if percent > 75
+	{
+		return "battery.100percent"
+	}
+	if percent > 50
+	{
+		return "battery.75percent"
+	}
+	if percent > 25
+	{
+		return "battery.50percent"
+	}
+	if percent > 0
+	{
+		return "battery.25percent"
+	}
+	return "battery.0percent"
+}
+
 class MXW01Peripheral : NSObject, BluetoothPeripheralHandler, CBPeripheralDelegate, Identifiable, ObservableObject
 {
 	private var peripheral : CBPeripheral
@@ -143,6 +168,8 @@ class MXW01Peripheral : NSObject, BluetoothPeripheralHandler, CBPeripheralDelega
 	@Published var lastError : Error? = nil
 	@Published var batteryLevelPercent : Int? = nil
 	var error : String?	{	lastError.map{ "\($0.localizedDescription)"	}	}
+	var batteryLevelIconName : String	{	GetBatteryIconName(percent: batteryLevelPercent)	}
+
 
 	//	gr: store these characteristics
 	static let ControlUid =		CBUUID(string: "0000ae01-0000-1000-8000-00805f9b34fb")
@@ -639,7 +666,7 @@ struct PrinterView : View
 			
 			Label("\(printer.name) \(servicesDebug) \(printer.state)",systemImage: "printer.fill")
 				.background(debugColour)
-			Label("Battery: \(batteryDebug)",systemImage: "battery.75percent")
+			Label("Battery: \(batteryDebug)",systemImage: printer.batteryLevelIconName )
 			if let error = printer.error
 			{
 				Label(error,systemImage: "exclamationmark.triangle.fill")
