@@ -353,7 +353,7 @@ class MXW01Peripheral : NSObject, BluetoothPeripheralHandler, CBPeripheralDelega
 			{
 				do
 				{
-					try await PrintSomething()
+					try await InitialisePrinter()
 				}
 				catch
 				{
@@ -589,7 +589,26 @@ class MXW01Peripheral : NSObject, BluetoothPeripheralHandler, CBPeripheralDelega
 		return response.payload
 	}
 
-	func PrintSomething() async throws
+	func InitialisePrinter() async throws
+	{
+		guard let control, let data, let notification else
+		{
+			throw PrintError("Missing control/data/notification characteristics")
+		}
+		
+		//	get notifications
+		//peripheral.setNotifyValue(true, for: control)
+		peripheral.setNotifyValue(true, for: notification)
+		//peripheral.setNotifyValue(true, for: data)
+		
+		try await WaitForStatus()
+		try await WaitForBatteryLevel()
+		
+		SetPrinterDarkness(128)
+		
+	}
+	
+	func PrintChequerBoard() async throws
 	{
 		func CharToBool(_ char:String.Element) -> Bool
 		{
@@ -648,32 +667,19 @@ class MXW01Peripheral : NSObject, BluetoothPeripheralHandler, CBPeripheralDelega
 	
 	func PrintImage(imageRowBits:[[Bool]]) async throws
 	{
-		guard let control, let data, let notification else
-		{
-			throw PrintError("Missing control/data/notification characteristics")
-		}
-		
-		//	get notifications
-		//peripheral.setNotifyValue(true, for: control)
-		peripheral.setNotifyValue(true, for: notification)
-		//peripheral.setNotifyValue(true, for: data)
-		
-		try await WaitForStatus()
-		try await WaitForBatteryLevel()
-	
-		SetPrinterDarkness(128)
-
 		try await WaitForIdleStatus()
 		
 		func PackLineBits(lineBits:[Bool]) -> [UInt8]
 		{
 			//	init buffer
 			var rowBytes : [UInt8] = (0..<imageWidth/8).map{ _ in 0 }
-			for i in 0..<lineBits.count
+			for i in 0..<min(lineBits.count,imageWidth)
 			{
 				let Byte = i / 8
 				let Bit = i % 8
-				let Value = lineBits[i] ? 1 : 0
+				let Black = UInt8(0)
+				let White = UInt8(1)
+				let Value = lineBits[i] ? Black : White 
 				rowBytes[Byte] |= (UInt8)(Value << Bit)
 			}
 			return rowBytes
@@ -746,7 +752,7 @@ class MXW01Peripheral : NSObject, BluetoothPeripheralHandler, CBPeripheralDelega
 			{
 				throw PrintError("Row expected to have \(rowByteCount) bytes, but provided \(rowData.count)")
 			}
-			let delayMs = 50
+			let delayMs = 100
 			
 			peripheral.writeValue( Data(rowData), for: self.data!, type: .withoutResponse)
 			
@@ -939,22 +945,115 @@ class BluetoothManager : NSObject, CBCentralManagerDelegate, ObservableObject
 	}
 }
 
+// Get pixels from an NSImage
+func imageToPixels(_ image: NSImage,brightnessThreshold:UInt8) -> [[Bool]]
+{
+	var rows = [[Bool]]()
+
+	let pixelData = (image.cgImage(forProposedRect: nil, context: nil, hints: nil)!).dataProvider!.data
+	let data: UnsafePointer<UInt8> = CFDataGetBytePtr(pixelData)
+	
+	for y in 0..<Int(image.size.height) 
+	{
+		var row = [Bool]()
+		for x in 0..<Int(image.size.width) 
+		{
+			let pos = CGPoint(x: x, y: y)
+			
+			let pixelInfo: Int = ((Int(image.size.width) * Int(pos.y) * 4) + Int(pos.x) * 4)
+			
+			let r = data[pixelInfo]
+			let g = data[pixelInfo + 1]
+			let b = data[pixelInfo + 2]
+			let a = data[pixelInfo + 3]
+			
+			let pixel = r > brightnessThreshold
+			row.append(pixel)
+		}
+		rows.append(row)
+	}
+	return rows
+}
+
+func pixelsToImage(pixelBits: [[Bool]]) -> NSImage? 
+{
+	let height = pixelBits.count
+	let width = pixelBits[0].count
+	
+	let rgbColorSpace = CGColorSpaceCreateDeviceRGB()
+	let bitmapInfo = CGBitmapInfo(rawValue: CGImageAlphaInfo.premultipliedFirst.rawValue)
+	let bitsPerComponent = 8
+	let bitsPerPixel = 32
+	
+	struct Pixel 
+	{
+		var a: UInt8
+		var r: UInt8
+		var g: UInt8
+		var b: UInt8
+		
+		static let white = Pixel(a:255,r:255,g:255,b:255)
+		static let black = Pixel(a:255,r:0,g:0,b:0)
+	}
+	
+	func RowBitsToPixels(bits:[Bool]) -> [Pixel]
+	{
+		return bits.map{ $0 ? Pixel.white : Pixel.black }
+	}
+	let pixels = pixelBits.flatMap{ RowBitsToPixels(bits:$0) }
+		
+	var data = pixels
+	guard let providerRef = CGDataProvider(data: NSData(bytes: &data,
+														length: data.count * MemoryLayout<Pixel>.size)
+	)
+	else { return nil }
+	
+	guard let cgim = CGImage(
+		width: width,
+		height: height,
+		bitsPerComponent: bitsPerComponent,
+		bitsPerPixel: bitsPerPixel,
+		bytesPerRow: width * MemoryLayout<Pixel>.size,
+		space: rgbColorSpace,
+		bitmapInfo: bitmapInfo,
+		provider: providerRef,
+		decode: nil,
+		shouldInterpolate: true,
+		intent: .defaultIntent
+	)
+	else { return nil }
+	
+	return NSImage(cgImage: cgim, size: CGSize(width: width, height: height))
+}
 
 //	because the peripheral is a class, it needs it's own view 
 //	with @StateObject in order to see changes
 struct PrinterView : View 
 {
 	@StateObject var printer : MXW01Peripheral
+	@State var brightnessThresholdFloat : Float = 0.5
+	var brightnessThreshold : UInt8	{	UInt8( brightnessThresholdFloat * 255.0 )	}
+	var sourceImage = NSImage(named:"HoltsHitAndRun")!
+	
+	@State var thresholdedPixels : [[Bool]]? = nil
+	@State var thresholdedImage : NSImage? = nil
+	
+	func UpdateThresholdedImage()
+	{
+		thresholdedPixels = imageToPixels( sourceImage, brightnessThreshold: brightnessThreshold )
+		thresholdedImage = pixelsToImage( pixelBits: thresholdedPixels! )
+	}
 	
 	func OnClickedPrint()
 	{
 		Task
 		{
-			try await printer.PrintSomething()
+			UpdateThresholdedImage()
+			try await printer.PrintImage(imageRowBits: thresholdedPixels!)
 		}
 	}
 	
-	var body: some View
+	@ViewBuilder func StatusView() -> some View
 	{
 		VStack(alignment: .leading,spacing: 10)
 		{
@@ -974,11 +1073,43 @@ struct PrinterView : View
 			{
 				Label(error,systemImage: "exclamationmark.triangle.fill")
 			}
+		}
+	}
+	
+	@ViewBuilder func ImageAndPrintView() -> some View
+	{
+		VStack(alignment: .leading,spacing: 10)
+		{
+			Slider(value: $brightnessThresholdFloat, in: 0...1)
+			{
+				Text("Brightness threshold \(brightnessThreshold)")
+			}
+			.onChange(of: self.brightnessThresholdFloat )
+			{
+				UpdateThresholdedImage()
+			}
+			.onAppear
+			{
+				UpdateThresholdedImage()
+			}
+			
+			Image( nsImage: thresholdedImage ?? sourceImage )
+				.resizable()
+				.scaledToFit()
 			
 			Button(action:OnClickedPrint)
 			{
 				Text("Print something")
 			}
+		}
+	}
+	
+	var body: some View
+	{
+		HStack(alignment: .top)
+		{
+			StatusView()
+			ImageAndPrintView()
 		}
 	}
 }
@@ -993,7 +1124,7 @@ struct CatPrinterManagerView : View
 		VStack
 		{
 			Text("Printers: \(printers.mxw01s.count)")
-			List
+			VStack
 			{
 				ForEach( printers.mxw01s )
 				{
