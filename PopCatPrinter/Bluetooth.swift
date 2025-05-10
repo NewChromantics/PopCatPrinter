@@ -1,6 +1,6 @@
 import SwiftUI
 import CoreBluetooth
-
+import Combine
 
 
 public struct PrintError : LocalizedError
@@ -157,6 +157,44 @@ func GetBatteryIconName(percent:Int?) -> String
 	return "battery.0percent"
 }
 
+public class PromiseWrapper<ResolvedValue>
+{
+	var future : Future<ResolvedValue,any Error>!
+	private var resolvingFunctor : ((Result<ResolvedValue,any Error>)->Void)!
+	
+	//public init(resolvingFunctor:@escaping (Result<ResolvedValue,any Error>)->Void)
+	public init()
+	{
+		let future = Future<ResolvedValue,any Error>()
+		{
+			promise in
+			self.resolvingFunctor = promise
+		}
+		self.future = future
+	}
+	
+	public func Resolve(_ data:ResolvedValue)
+	{
+		resolvingFunctor( Result.success(data) )
+	}
+	
+	public func Reject(_ error:Error)
+	{
+		resolvingFunctor( Result.failure(error) )
+	}
+	
+	public func Wait() async throws -> ResolvedValue
+	{
+		try await self.future.value
+	}
+}
+
+struct Response
+{
+	var payload : Data
+	var command : UInt8
+}
+
 class MXW01Peripheral : NSObject, BluetoothPeripheralHandler, CBPeripheralDelegate, Identifiable, ObservableObject
 {
 	enum PrinterStatus
@@ -181,7 +219,7 @@ class MXW01Peripheral : NSObject, BluetoothPeripheralHandler, CBPeripheralDelega
 	{
 		switch lastStatus
 		{
-			case nil:	return "question.mark"
+			case nil:	return "questionmark.app.fill"
 			case .PaperMissing:	return "newspaper"
 			case .NotOkay:	return "exclamationmark.triangle.fill"
 			case .Idle:	return "checkmark.seal"
@@ -196,10 +234,16 @@ class MXW01Peripheral : NSObject, BluetoothPeripheralHandler, CBPeripheralDelega
 	let command_GetStatus : UInt8 = 0xA1
 	let command_GetBattery : UInt8 = 0xAB
 	let command_SetDarkness : UInt8 = 0xA2
+	let command_StartPrint : UInt8 = 0xA9
+	let command_FlushPrint : UInt8 = 0xAD
+	let command_PrintFinished : UInt8 = 0xAA
+	let imageWidth = 384
 
 	var control : CBCharacteristic? = nil
 	var notification : CBCharacteristic? = nil
 	var data : CBCharacteristic? = nil
+	
+	var pendingNotification : PromiseWrapper<Response>?
 		
 	
 	init(peripheral: CBPeripheral) 
@@ -253,6 +297,15 @@ class MXW01Peripheral : NSObject, BluetoothPeripheralHandler, CBPeripheralDelega
 		peripheral.discoverServices(nil)
 	}
 	
+	func OnError(_ error:Error)
+	{
+		DispatchQueue.main.async
+		{
+			@MainActor in
+			self.lastError = error
+		}
+	}
+	
 	func peripheral(_ peripheral: CBPeripheral, didDiscoverServices error: Error?) 
 	{
 		if let error 
@@ -294,20 +347,22 @@ class MXW01Peripheral : NSObject, BluetoothPeripheralHandler, CBPeripheralDelega
 			self.control = service.GetCharacteristic(characteristicUid: MXW01Peripheral.ControlUid)
 			self.notification = service.GetCharacteristic(characteristicUid: MXW01Peripheral.NotificationUid)
 			self.data = service.GetCharacteristic(characteristicUid: MXW01Peripheral.DataUid)
+			
+			
+			Task
+			{
+				do
+				{
+					try await PrintSomething()
+				}
+				catch
+				{
+					OnError(error)
+				}
+			}
 		}
 		
 		
-		Task
-		{
-			do
-			{
-				try await PrintSomething()
-			}
-			catch
-			{
-				self.lastError = error
-			}
-		}
 	}
 	
 	//	catch any errors from notification update subscriptions
@@ -316,7 +371,7 @@ class MXW01Peripheral : NSObject, BluetoothPeripheralHandler, CBPeripheralDelega
 		if let error 
 		{
 			print("didUpdateNotificationStateFor \(characteristic.name) error \(error.localizedDescription)")
-			self.lastError = error
+			OnError(error)
 			return
 		}
 		print("Characteristic Notification for \(characteristic.name) now \(characteristic.isNotifying)")
@@ -357,7 +412,7 @@ class MXW01Peripheral : NSObject, BluetoothPeripheralHandler, CBPeripheralDelega
 		if let error 
 		{
 			print("didWriteValueFor \(characteristic.uuid) error \(error.localizedDescription)")
-			self.lastError = error
+			OnError(error)
 			return
 		}
 		
@@ -394,9 +449,17 @@ class MXW01Peripheral : NSObject, BluetoothPeripheralHandler, CBPeripheralDelega
 			print("Warning; Malformed footer \(footer)")
 		}
 		
+		let response = Response(payload: payload,command: command)
+		
+		if let pendingNotification
+		{
+			pendingNotification.Resolve(response)
+		}
+
+		//	some generic response handling
 		if command == command_GetStatus
 		{
-			try OnStatus(payload)
+			_ = try OnStatus(payload)
 			return
 		}
 		
@@ -407,7 +470,7 @@ class MXW01Peripheral : NSObject, BluetoothPeripheralHandler, CBPeripheralDelega
 		}
 	}
 	
-	func OnStatus(_ payload:Data) throws
+	func OnStatus(_ payload:Data) throws -> PrinterStatus
 	{
 		let payloadDebug = payload.map{ Int($0) }
 		print("New status x\(payload.count) \(payloadDebug)")
@@ -435,28 +498,31 @@ class MXW01Peripheral : NSObject, BluetoothPeripheralHandler, CBPeripheralDelega
 		//	but when tray open, we dont get this, but we do have 1 for status codes
 		let error = payload.count > 10 ? payload[10] : nil
 		
-		tempratureCentigrade = Int(temprature)
-		batteryLevelPercent = Int(batteryLevel)
-		if overallStatus == 0
+		let printerStatus : PrinterStatus = {
+			if overallStatus == 0
+			{
+				return .Idle
+			}
+			else if overallStatus == 1
+			{
+				return .PaperMissing
+			}
+			else
+			{
+				OnError( PrintError("Unknown overall-status \(overallStatus) (status \(status)") )
+				return .NotOkay
+			}
+		}()
+		
+		DispatchQueue.main.async
 		{
-			lastStatus = .Idle
-		}
-		else if overallStatus == 1
-		{
-			lastStatus = .PaperMissing
-		}
-		else
-		{
-			lastStatus = .NotOkay
-			lastError = PrintError("Unknown overall-status \(overallStatus) (status \(status)")
+			@MainActor in
+			self.lastStatus = printerStatus
+			self.tempratureCentigrade = Int(temprature)
+			self.batteryLevelPercent = Int(batteryLevel)
 		}
 		
-		/*	
-		let overallStatus = payload[12]
-		let status = payload[6]
-		let temprature = payload[10]
-		let errorcode = payload[13]
-		*/
+		return printerStatus
 	}
 	
 	func OnBatteryLevel(_ payload:Data) throws
@@ -465,7 +531,12 @@ class MXW01Peripheral : NSObject, BluetoothPeripheralHandler, CBPeripheralDelega
 		{
 			throw PrintError("Battery level expected only 1 byte, got \(payload.count) [\(String(describing: payload.first))]")
 		}
-		batteryLevelPercent = Int(payload[0])
+		
+		DispatchQueue.main.async
+		{
+			@MainActor in
+			self.batteryLevelPercent = Int(payload[0])
+		}
 	}
 	
 	func MakePacket(_ command:UInt8,payload:[UInt8]) -> Data
@@ -491,7 +562,91 @@ class MXW01Peripheral : NSObject, BluetoothPeripheralHandler, CBPeripheralDelega
 		return Data( Array(data) )
 	}
 	
+	
+	//	if expectedResponseCommand nil, then we expect the one we sent
+	func SendPacketAndWaitForResponse(_ command:UInt8,payload:[UInt8],expectedResponseCommand:UInt8?=nil) async throws -> Data
+	{
+		let packet = MakePacket(command, payload: payload)
+
+		if pendingNotification != nil
+		{
+			throw PrintError("Already waiting for a notification")
+		}
+		
+		//	setup promise to be resolved
+		pendingNotification = PromiseWrapper<Response>()
+		peripheral.writeValue( packet, for:control!, type: .withoutResponse )
+
+		let response = try await pendingNotification!.Wait()
+		pendingNotification = nil
+		let expected = (expectedResponseCommand ?? command)
+		if response.command != expected
+		{
+			throw PrintError("Notification for wrong command \(response.command) expected \(expected) (send \(command))")
+		}
+		print("Notification for command \(response.command) recieved")
+		
+		return response.payload
+	}
+
 	func PrintSomething() async throws
+	{
+		func CharToBool(_ char:String.Element) -> Bool
+		{
+			return char != " "
+		}
+		let pattern = [
+			"XXXX    XXXX    XXXX    XXXX    XXXX",
+			"XXXX    XXXX    XXXX    XXXX    XXXX",
+			"XXXX    XXXX    XXXX    XXXX    XXXX",
+			"XXXX    XXXX    XXXX    XXXX    XXXX",
+			"XXXX    XXXX    XXXX    XXXX    XXXX",
+			"    XXXX    XXXX    XXXX    XXXX    ",
+			"    XXXX    XXXX    XXXX    XXXX    ",
+			"    XXXX    XXXX    XXXX    XXXX    ",
+			"    XXXX    XXXX    XXXX    XXXX    ",
+			"    XXXX    XXXX    XXXX    XXXX    ",
+			"XXXX    XXXX    XXXX    XXXX    XXXX",
+			"XXXX    XXXX    XXXX    XXXX    XXXX",
+			"XXXX    XXXX    XXXX    XXXX    XXXX",
+			"XXXX    XXXX    XXXX    XXXX    XXXX",
+			"XXXX    XXXX    XXXX    XXXX    XXXX",
+			"    XXXX    XXXX    XXXX    XXXX    ",
+			"    XXXX    XXXX    XXXX    XXXX    ",
+			"    XXXX    XXXX    XXXX    XXXX    ",
+			"    XXXX    XXXX    XXXX    XXXX    ",
+			"XXXX    XXXX    XXXX    XXXX    XXXX",
+			"XXXX    XXXX    XXXX    XXXX    XXXX",
+			"XXXX    XXXX    XXXX    XXXX    XXXX",
+			"XXXX    XXXX    XXXX    XXXX    XXXX",
+			"XXXX    XXXX    XXXX    XXXX    XXXX",
+			"XXXX    XXXX    XXXX    XXXX    XXXX",
+			"    XXXX    XXXX    XXXX    XXXX    ",
+			"    XXXX    XXXX    XXXX    XXXX    ",
+			"    XXXX    XXXX    XXXX    XXXX    ",
+			"    XXXX    XXXX    XXXX    XXXX    ",
+			"    XXXX    XXXX    XXXX    XXXX    ",
+			"XXXX    XXXX    XXXX    XXXX    XXXX",
+			"XXXX    XXXX    XXXX    XXXX    XXXX",
+			"XXXX    XXXX    XXXX    XXXX    XXXX",
+			"XXXX    XXXX    XXXX    XXXX    XXXX",
+			"XXXX    XXXX    XXXX    XXXX    XXXX",
+			"    XXXX    XXXX    XXXX    XXXX    ",
+			"    XXXX    XXXX    XXXX    XXXX    ",
+			"    XXXX    XXXX    XXXX    XXXX    ",
+			"    XXXX    XXXX    XXXX    XXXX    ",
+			"    XXXX    XXXX    XXXX    XXXX    ",
+			"XXXX    XXXX    XXXX    XXXX    XXXX",
+			"XXXX    XXXX    XXXX    XXXX    XXXX",
+			"XXXX    XXXX    XXXX    XXXX    XXXX",
+			"XXXX    XXXX    XXXX    XXXX    XXXX",
+			"XXXX    XXXX    XXXX    XXXX    XXXX",
+		]
+		let patternBools = pattern.map{ $0.map(CharToBool) }
+		try await PrintImage(imageRowBits: patternBools)
+	}
+	
+	func PrintImage(imageRowBits:[[Bool]]) async throws
 	{
 		guard let control, let data, let notification else
 		{
@@ -503,35 +658,106 @@ class MXW01Peripheral : NSObject, BluetoothPeripheralHandler, CBPeripheralDelega
 		peripheral.setNotifyValue(true, for: notification)
 		//peripheral.setNotifyValue(true, for: data)
 		
-		let queryStatusPacket = MakePacket(command_GetStatus,payload: [0x0])
-		print("Querying status...")
-		peripheral.writeValue(queryStatusPacket, for: control, type: .withoutResponse)
-
-		let queryBatteryPacket = MakePacket(command_GetBattery,payload: [0x0])
-		print("Querying Battery...")
-		peripheral.writeValue(queryBatteryPacket, for: control, type: .withoutResponse)
+		try await WaitForStatus()
+		try await WaitForBatteryLevel()
 	
-		let darknessLevel : UInt8 = 128
+		SetPrinterDarkness(128)
+
+		try await WaitForIdleStatus()
+		
+		func PackLineBits(lineBits:[Bool]) -> [UInt8]
+		{
+			//	init buffer
+			var rowBytes : [UInt8] = (0..<imageWidth/8).map{ _ in 0 }
+			for i in 0..<lineBits.count
+			{
+				let Byte = i / 8
+				let Bit = i % 8
+				let Value = lineBits[i] ? 1 : 0
+				rowBytes[Byte] |= (UInt8)(Value << Bit)
+			}
+			return rowBytes
+		}
+		let linePackedBytes = imageRowBits.map{ PackLineBits(lineBits: $0) }
+		try await PrintPackedRows( linePackedBytes )
+	}
+	
+	func WaitForBatteryLevel() async throws
+	{
+		print("Querying Battery...")
+		let payload = try await SendPacketAndWaitForResponse( command_GetBattery, payload: [0x0] )
+		try OnBatteryLevel(payload)
+	}
+	
+	func WaitForIdleStatus() async throws
+	{
+		//	todo: timeout
+		while true
+		{
+			let newStatus = try await WaitForStatus()
+			if newStatus == .Idle
+			{
+				return
+			}
+		}
+	}
+	
+	func WaitForStatus() async throws -> PrinterStatus
+	{
+		print("Querying status...")
+		let payload = try await SendPacketAndWaitForResponse(command_GetStatus, payload: [0x0])
+		
+		let status = try OnStatus(payload)
+		return status
+	}
+	
+	func SetPrinterDarkness(_ darknessLevel:UInt8) 
+	{
 		let setDarknessPacket = MakePacket(command_SetDarkness,payload: [darknessLevel])
-		print("Setting darkness...")
-		peripheral.writeValue(setDarknessPacket, for: control, type: .withoutResponse)
-		/*
-				 
-		 3. Command format: 0x22 0x21 [CMD] 0x00 [LEN_L] [LEN_H] [PAYLOAD...] [CRC8] 0xFF
-		 4. Print process:
-		 a. Set intensity (0xA2)
-		 b. Request status (0xA1)
-		 c. Send print request (0xA9)
-		 d. Transfer data in chunks
-		 e. Flush data (0xAD)
-		 f. Wait for print complete notification (0xAA)
-		 
-		 5. Image encoding:
-		 - 1-bit monochrome (black/white)
-		 - 384 pixels wide (48 bytes)
-		 - Rows are sent sequentially
-		 - Image is rotated 180° before sending
-		*/
+		print("Setting darkness to \(darknessLevel)...")
+		peripheral.writeValue(setDarknessPacket, for: control!, type: .withoutResponse)
+	}
+	
+	func PrintPackedRows(_ linePackedBytes:[[UInt8]]) async throws
+	{
+		//	image height=line count
+		let lineCount = UInt16(linePackedBytes.count)
+		let lineCountBytes = lineCount.littleEndianBytes
+		let mode : UInt8 = 0x0
+		let payload = [ lineCountBytes, [0x30, mode] ].flatMap{$0}
+		
+		let response = try await SendPacketAndWaitForResponse( command_StartPrint, payload: payload )
+		let printError = response[0]
+		if printError != 0
+		{
+			throw PrintError("Print request error; \(printError)")
+		}
+		
+		//	send data
+		for packedLineBytes in linePackedBytes
+		{
+			//	1bit data
+			//	8 bits/pixels per row
+			//	row is 384 pixels wide
+			let rowByteCount = imageWidth/8
+			//let rowData = [UInt8](repeating: line, count: rowByteCount)
+			let rowData = packedLineBytes
+			if rowData.count != rowByteCount
+			{
+				throw PrintError("Row expected to have \(rowByteCount) bytes, but provided \(rowData.count)")
+			}
+			let delayMs = 50
+			
+			peripheral.writeValue( Data(rowData), for: self.data!, type: .withoutResponse)
+			
+			await Task.sleep(milliseconds: delayMs)
+		}
+
+		//	send flush when finished
+		let flushResponse = try await SendPacketAndWaitForResponse( command_FlushPrint, payload:[0x0], expectedResponseCommand:command_PrintFinished )
+		let flushResponseDebug = flushResponse.map{ Int($0) }
+		print("Flush response \(flushResponseDebug)")
+		//	Wait for the AA notification on AE02, indicating the printer has finished the physical
 	}
 }
 	
@@ -720,6 +946,14 @@ struct PrinterView : View
 {
 	@StateObject var printer : MXW01Peripheral
 	
+	func OnClickedPrint()
+	{
+		Task
+		{
+			try await printer.PrintSomething()
+		}
+	}
+	
 	var body: some View
 	{
 		VStack(alignment: .leading,spacing: 10)
@@ -739,6 +973,11 @@ struct PrinterView : View
 			if let error = printer.error
 			{
 				Label(error,systemImage: "exclamationmark.triangle.fill")
+			}
+			
+			Button(action:OnClickedPrint)
+			{
+				Text("Print something")
 			}
 		}
 	}
