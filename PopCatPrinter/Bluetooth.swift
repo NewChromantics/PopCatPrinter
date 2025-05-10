@@ -3,6 +3,21 @@ import CoreBluetooth
 
 
 
+public struct PrintError : LocalizedError
+{
+	let description: String
+	
+	public init(_ description: String) {
+		self.description = description
+	}
+	
+	public var errorDescription: String? {
+		description
+	}
+}
+
+
+
 //	Printer found: "MXW01" - {"id":"Yl2JxVBQJjs7IRbZDVyrWQ=="}
 
 //	https://github.com/rbaron/catprinter/compare/main...jeremy46231:MXW01-catprinter:main
@@ -37,7 +52,6 @@ public class CatPrinterManager : ObservableObject
 {
 	var bluetoothManager : BluetoothManager!
 	@Published var mxw01s = [MXW01Peripheral]()
-	static let mxw10PrinterServiceUid = CBUUID(string: "0000ae30-0000-1000-8000-00805f9b34fb")
 	static let mxw10DeviceName = "MXW01"
 	
 	public init()
@@ -58,9 +72,64 @@ public class CatPrinterManager : ObservableObject
 }
 
 
+extension CBPeripheral
+{
+	func GetService(serviceUid:CBUUID) -> CBService?
+	{
+		let services = self.services ?? []
+		let matches = services.filter
+		{
+			$0.uuid == serviceUid
+		}
+		return matches.first
+	}
+}
+
+extension CBService
+{
+	func GetCharacteristic(characteristicUid:CBUUID) -> CBCharacteristic?
+	{
+		let chars = self.characteristics ?? []
+		let matches = chars.filter
+		{
+			$0.uuid == characteristicUid
+		}
+		return matches.first
+	}
+}
+
+
+extension UInt16
+{
+	var littleEndianBytes : [UInt8]
+	{
+		var sixteen = self.littleEndian
+		return withUnsafeBytes(of: &sixteen) 
+		{
+			Array($0)
+		}
+	}
+}
+
+
+
 public protocol BluetoothPeripheralHandler
 {
 	func OnConnected()
+}
+
+extension CBCharacteristic
+{
+	var name : String
+	{
+		switch self.uuid
+		{
+			case MXW01Peripheral.ControlUid:	return "Control"
+			case MXW01Peripheral.NotificationUid:	return "Notification"
+			case MXW01Peripheral.DataUid:	return "Data"
+			default:	return "\(self.uuid)"
+		}
+	}
 }
 
 class MXW01Peripheral : NSObject, BluetoothPeripheralHandler, CBPeripheralDelegate, Identifiable, ObservableObject
@@ -71,6 +140,22 @@ class MXW01Peripheral : NSObject, BluetoothPeripheralHandler, CBPeripheralDelega
 	var name : String	{	peripheral.name ?? "\(peripheral.identifier)"	}
 	var state : CBPeripheralState	{	peripheral.state	}
 	//@Published var state : CBPeripheralState = .disconnected
+	@Published var lastError : Error? = nil
+	@Published var batteryLevelPercent : Int? = nil
+	var error : String?	{	lastError.map{ "\($0.localizedDescription)"	}	}
+
+	//	gr: store these characteristics
+	static let ControlUid =		CBUUID(string: "0000ae01-0000-1000-8000-00805f9b34fb")
+	static let NotificationUid =	CBUUID(string: "0000ae02-0000-1000-8000-00805f9b34fb")
+	static let DataUid = 			CBUUID(string: "0000ae03-0000-1000-8000-00805f9b34fb")
+	let mxw10PrinterServiceUid = CBUUID(string: "0000ae30-0000-1000-8000-00805f9b34fb")
+	let command_GetStatus : UInt8 = 0xA1
+	let command_GetBattery : UInt8 = 0xAB
+
+	var control : CBCharacteristic? = nil
+	var notification : CBCharacteristic? = nil
+	var data : CBCharacteristic? = nil
+		
 	
 	init(peripheral: CBPeripheral) 
 	{
@@ -79,6 +164,27 @@ class MXW01Peripheral : NSObject, BluetoothPeripheralHandler, CBPeripheralDelega
 		
 		//	setup handling
 		self.peripheral.delegate = self
+	}
+	
+	var debugColour : Color
+	{
+		let IsConnected = state == .connected
+		let IsConnecting = state == .connecting
+		if self.lastError != nil
+		{
+			return .red
+		}
+		
+		if IsConnecting
+		{
+			return .yellow
+		}
+		if IsConnected
+		{
+			return .green
+		}
+		
+		return .clear		
 	}
 	
 	func OnStateChanged()
@@ -104,27 +210,237 @@ class MXW01Peripheral : NSObject, BluetoothPeripheralHandler, CBPeripheralDelega
 	
 	func peripheral(_ peripheral: CBPeripheral, didDiscoverServices error: Error?) 
 	{
+		if let error 
+		{
+			print("didDiscoverServices error \(error.localizedDescription)")
+			self.lastError = error
+			return
+		}
+		
 		let services = peripheral.services ?? []
 		let name = peripheral.name ?? "noname"
 		print("did discover services x\(services.count) for \(name) (\(peripheral.state))")
 		OnStateChanged()
+
+		//	start finding characteristics
+		services.forEach
+		{
+			peripheral.discoverCharacteristics(nil, for: $0)
+		}
+		
 	}
 	
-	var debugColour : Color
+	func peripheral(_ peripheral: CBPeripheral, didDiscoverCharacteristicsFor service: CBService, error: Error?) 
 	{
-		let IsConnected = state == .connected
-		let IsConnecting = state == .connecting
-		
-		if IsConnecting
+		if let error 
 		{
-			return .yellow
-		}
-		if IsConnected
-		{
-			return .green
+			print("didDiscoverCharacteristicsFor error \(error.localizedDescription)")
+			self.lastError = error
+			return
 		}
 		
-		return .clear		
+		let characteristics = service.characteristics ?? []
+		let name = peripheral.name ?? "noname"
+		print("did discover characteristics x\(characteristics.count) for \(name) (\(peripheral.state))")
+		OnStateChanged()
+		
+		if service.uuid == mxw10PrinterServiceUid
+		{
+			self.control = service.GetCharacteristic(characteristicUid: MXW01Peripheral.ControlUid)
+			self.notification = service.GetCharacteristic(characteristicUid: MXW01Peripheral.NotificationUid)
+			self.data = service.GetCharacteristic(characteristicUid: MXW01Peripheral.DataUid)
+		}
+		
+		
+		Task
+		{
+			do
+			{
+				try await PrintSomething()
+			}
+			catch
+			{
+				self.lastError = error
+			}
+		}
+	}
+	
+	//	catch any errors from notification update subscriptions
+	func peripheral(_ peripheral: CBPeripheral, didUpdateNotificationStateFor characteristic: CBCharacteristic, error: Error?) 
+	{
+		if let error 
+		{
+			print("didUpdateNotificationStateFor \(characteristic.name) error \(error.localizedDescription)")
+			self.lastError = error
+			return
+		}
+		print("Characteristic Notification for \(characteristic.name) now \(characteristic.isNotifying)")
+	}
+
+	func peripheral(_ peripheral: CBPeripheral, didUpdateValueFor characteristic: CBCharacteristic, error: Error?) 
+	{
+		do
+		{
+			if let error
+			{
+				print("didUpdateValueFor \(characteristic.name) error \(error.localizedDescription)")
+				throw error
+			}
+			
+			guard let value = characteristic.value else 
+			{
+				throw PrintError("Missing characteristic \(characteristic.name) value")
+				return
+			}
+			
+			if characteristic.uuid == MXW01Peripheral.NotificationUid
+			{
+				try OnNotification(value)
+				return
+			}
+			
+			throw PrintError("Dont know how to hanle \(characteristic.name) value-change \(value)")
+		}
+		catch
+		{
+			self.lastError = error
+		}
+	}
+	
+	func peripheral(_ peripheral: CBPeripheral, didWriteValueFor characteristic: CBCharacteristic, error: Error?) 
+	{
+		if let error 
+		{
+			print("didWriteValueFor \(characteristic.uuid) error \(error.localizedDescription)")
+			self.lastError = error
+			return
+		}
+		
+		print("Characteristic \(characteristic.uuid) wrote value")
+	}
+	
+	func OnNotification(_ packet:Data) throws
+	{
+		//	https://github.com/jeremy46231/MXW01-catprinter/blob/main/PROTOCOL.md
+		//	parse 
+		print("Got notification \(packet)")
+		let header = packet[0...1]
+		if header[0] != 0x22
+		{
+			throw PrintError("Malformed header")
+		}
+		let command = packet[2]
+		let unknown = packet[3]
+		let lengthLittleEndian = packet.subdata(in: 4..<6)
+		let length16 = Int(lengthLittleEndian[0]) | (Int(lengthLittleEndian[1]) << 8)
+		let payload = Data(packet[6...packet.count-2])
+		//let payload = packet.subdata(in:6..<packet.count-1)
+		//	no crc!Da
+		let footer = packet[packet.count-1]
+
+		if length16 != payload.count
+		{
+			throw PrintError("Packet length \(length16) but payload is \(payload.count)")
+		}
+
+		if footer != 0xff
+		{
+			//throw PrintError("Malformed footer")
+			print("Warning; Malformed footer \(footer)")
+		}
+		
+		if command == command_GetStatus
+		{
+			try OnStatus(payload)
+			return
+		}
+		
+		if command == command_GetBattery
+		{
+			try OnBatteryLevel(payload)
+			return
+		}
+	}
+	
+	func OnStatus(_ payload:Data) throws
+	{
+		print("New status x\(payload.count)")
+		/*
+		let overallStatus = payload[12]
+		let status = payload[6]
+		let temprature = payload[10]
+		let errorcode = payload[13]
+		*/
+	}
+	
+	func OnBatteryLevel(_ payload:Data) throws
+	{
+		if payload.count != 1
+		{
+			throw PrintError("Battery level expected only 1 byte, got \(payload.count) [\(String(describing: payload.first))]")
+		}
+		batteryLevelPercent = Int(payload[0])
+	}
+	
+	func PrintSomething() async throws
+	{
+		guard let control, let data, let notification else
+		{
+			throw PrintError("Missing control/data/notification characteristics")
+		}
+		
+		//	get notifications
+		//peripheral.setNotifyValue(true, for: control)
+		peripheral.setNotifyValue(true, for: notification)
+		//peripheral.setNotifyValue(true, for: data)
+		
+		func MakePacket(_ command:UInt8,payload:[UInt8]) -> Data
+		{
+			func calcCrc() -> UInt8
+			{
+				//	todo!
+				return 0x0
+			}
+			
+			let crc : UInt8 = calcCrc()
+			let length16 = UInt16(payload.count)
+			let lengthBytes = length16.littleEndianBytes
+			
+			let packetParts = 
+			[
+				[0x22,0x21,command,0x0],
+				lengthBytes,
+				payload,
+				[crc,0xff]
+			]
+			let data = packetParts.flatMap{$0}
+			return Data( Array(data) )
+		}
+		
+		let queryStatusPacket = MakePacket(command_GetStatus,payload: [0x0])
+		print("Querying status...")
+		peripheral.writeValue(queryStatusPacket, for: control, type: .withoutResponse)
+
+		let queryBatteryPacket = MakePacket(command_GetBattery,payload: [0x0])
+		print("Querying Battery...")
+		peripheral.writeValue(queryBatteryPacket, for: control, type: .withoutResponse)
+		/*
+				 
+		 3. Command format: 0x22 0x21 [CMD] 0x00 [LEN_L] [LEN_H] [PAYLOAD...] [CRC8] 0xFF
+		 4. Print process:
+		 a. Set intensity (0xA2)
+		 b. Request status (0xA1)
+		 c. Send print request (0xA9)
+		 d. Transfer data in chunks
+		 e. Flush data (0xAD)
+		 f. Wait for print complete notification (0xAA)
+		 
+		 5. Image encoding:
+		 - 1-bit monochrome (black/white)
+		 - 384 pixels wide (48 bytes)
+		 - Rows are sent sequentially
+		 - Image is rotated 180° before sending
+		*/
 	}
 }
 	
@@ -274,7 +590,7 @@ class BluetoothManager : NSObject, CBCentralManagerDelegate, ObservableObject
 			}
 		}
 	
-		print("Updating \(name) (\(peripheral.state))")
+		//print("Updating \(name) (\(peripheral.state))")
 		updateDeviceState(peripheral)
 	}
 	
@@ -315,10 +631,20 @@ struct PrinterView : View
 	
 	var body: some View
 	{
-		let debugColour = printer.debugColour
-		let servicesDebug = printer.services.count > 0 ? "(\(printer.services.count) services)" : ""
-		Text("Device Name: \(printer.name) \(servicesDebug) \(printer.state)")
-			.background(debugColour)
+		VStack(alignment: .leading,spacing: 10)
+		{
+			let debugColour = printer.debugColour
+			let servicesDebug = printer.services.count > 0 ? "(\(printer.services.count) services)" : ""
+			let batteryDebug = printer.batteryLevelPercent.map{ "\($0)%" } ?? "?"
+			
+			Label("\(printer.name) \(servicesDebug) \(printer.state)",systemImage: "printer.fill")
+				.background(debugColour)
+			Label("Battery: \(batteryDebug)",systemImage: "battery.75percent")
+			if let error = printer.error
+			{
+				Label(error,systemImage: "exclamationmark.triangle.fill")
+			}
+		}
 	}
 }
 
