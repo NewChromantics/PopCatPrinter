@@ -159,6 +159,11 @@ func GetBatteryIconName(percent:Int?) -> String
 
 class MXW01Peripheral : NSObject, BluetoothPeripheralHandler, CBPeripheralDelegate, Identifiable, ObservableObject
 {
+	enum PrinterStatus
+	{
+		case Idle,PaperMissing,NotOkay
+	}
+	
 	private var peripheral : CBPeripheral
 	var id : UUID	{	peripheral.identifier	}
 	var services : [CBService]	{	peripheral.services ?? []	}
@@ -166,10 +171,22 @@ class MXW01Peripheral : NSObject, BluetoothPeripheralHandler, CBPeripheralDelega
 	var state : CBPeripheralState	{	peripheral.state	}
 	//@Published var state : CBPeripheralState = .disconnected
 	@Published var lastError : Error? = nil
+	@Published var lastStatus : PrinterStatus? = nil
 	@Published var batteryLevelPercent : Int? = nil
+	@Published var tempratureCentigrade : Int? = nil
 	var error : String?	{	lastError.map{ "\($0.localizedDescription)"	}	}
 	var batteryLevelIconName : String	{	GetBatteryIconName(percent: batteryLevelPercent)	}
 
+	var printerStatusIconName : String	
+	{
+		switch lastStatus
+		{
+			case nil:	return "question.mark"
+			case .PaperMissing:	return "newspaper"
+			case .NotOkay:	return "exclamationmark.triangle.fill"
+			case .Idle:	return "checkmark.seal"
+		}
+	}
 
 	//	gr: store these characteristics
 	static let ControlUid =		CBUUID(string: "0000ae01-0000-1000-8000-00805f9b34fb")
@@ -178,6 +195,7 @@ class MXW01Peripheral : NSObject, BluetoothPeripheralHandler, CBPeripheralDelega
 	let mxw10PrinterServiceUid = CBUUID(string: "0000ae30-0000-1000-8000-00805f9b34fb")
 	let command_GetStatus : UInt8 = 0xA1
 	let command_GetBattery : UInt8 = 0xAB
+	let command_SetDarkness : UInt8 = 0xA2
 
 	var control : CBCharacteristic? = nil
 	var notification : CBCharacteristic? = nil
@@ -391,8 +409,49 @@ class MXW01Peripheral : NSObject, BluetoothPeripheralHandler, CBPeripheralDelega
 	
 	func OnStatus(_ payload:Data) throws
 	{
-		print("New status x\(payload.count)")
-		/*
+		let payloadDebug = payload.map{ Int($0) }
+		print("New status x\(payload.count) \(payloadDebug)")
+		//	init	[[0, 0, 0, 100, 19, 0, 0, 0, 68, 6]]
+		//	open  	[[0, 0, 0, 100, 19, 0, 1, 1, 182, 9]]
+		//	closed	[[0, 0, 0, 100, 19, 0, 0, 0, 135, 0]]
+		//	open  	[[0, 0, 0, 100, 19, 0, 1, 1, 6, 11]]
+		//	close 	[[0, 0, 0, 100, 19, 0, 0, 0, 153, 0]]
+		let a = payload[0]
+		let b = payload[1]
+		let c = payload[2]
+		let batteryLevel = payload[3]
+		let temprature = payload[4]	//	degrees centigrade
+		let f = payload[5]			//	possibly big endian of temp
+		
+		let status = payload[6]		//	0 idle, 1 printing according to docs
+		let overallStatus = payload[7]	//	0 ok, non-zero has error
+		
+		//	
+		let voltageLo = payload[8]
+		let voltageHi = payload[9]
+
+		//	from docs:
+		//	if Flag!=0): Error Code (1/9=No Paper, 4=Overheated, 8=Low Battery). Requires length check
+		//	but when tray open, we dont get this, but we do have 1 for status codes
+		let error = payload.count > 10 ? payload[10] : nil
+		
+		tempratureCentigrade = Int(temprature)
+		batteryLevelPercent = Int(batteryLevel)
+		if overallStatus == 0
+		{
+			lastStatus = .Idle
+		}
+		else if overallStatus == 1
+		{
+			lastStatus = .PaperMissing
+		}
+		else
+		{
+			lastStatus = .NotOkay
+			lastError = PrintError("Unknown overall-status \(overallStatus) (status \(status)")
+		}
+		
+		/*	
 		let overallStatus = payload[12]
 		let status = payload[6]
 		let temprature = payload[10]
@@ -409,6 +468,29 @@ class MXW01Peripheral : NSObject, BluetoothPeripheralHandler, CBPeripheralDelega
 		batteryLevelPercent = Int(payload[0])
 	}
 	
+	func MakePacket(_ command:UInt8,payload:[UInt8]) -> Data
+	{
+		func calcCrc() -> UInt8
+		{
+			//	todo!
+			return 0x0
+		}
+		
+		let crc : UInt8 = calcCrc()
+		let length16 = UInt16(payload.count)
+		let lengthBytes = length16.littleEndianBytes
+		
+		let packetParts = 
+		[
+			[0x22,0x21,command,0x0],
+			lengthBytes,
+			payload,
+			[crc,0xff]
+		]
+		let data = packetParts.flatMap{$0}
+		return Data( Array(data) )
+	}
+	
 	func PrintSomething() async throws
 	{
 		guard let control, let data, let notification else
@@ -421,29 +503,6 @@ class MXW01Peripheral : NSObject, BluetoothPeripheralHandler, CBPeripheralDelega
 		peripheral.setNotifyValue(true, for: notification)
 		//peripheral.setNotifyValue(true, for: data)
 		
-		func MakePacket(_ command:UInt8,payload:[UInt8]) -> Data
-		{
-			func calcCrc() -> UInt8
-			{
-				//	todo!
-				return 0x0
-			}
-			
-			let crc : UInt8 = calcCrc()
-			let length16 = UInt16(payload.count)
-			let lengthBytes = length16.littleEndianBytes
-			
-			let packetParts = 
-			[
-				[0x22,0x21,command,0x0],
-				lengthBytes,
-				payload,
-				[crc,0xff]
-			]
-			let data = packetParts.flatMap{$0}
-			return Data( Array(data) )
-		}
-		
 		let queryStatusPacket = MakePacket(command_GetStatus,payload: [0x0])
 		print("Querying status...")
 		peripheral.writeValue(queryStatusPacket, for: control, type: .withoutResponse)
@@ -451,6 +510,11 @@ class MXW01Peripheral : NSObject, BluetoothPeripheralHandler, CBPeripheralDelega
 		let queryBatteryPacket = MakePacket(command_GetBattery,payload: [0x0])
 		print("Querying Battery...")
 		peripheral.writeValue(queryBatteryPacket, for: control, type: .withoutResponse)
+	
+		let darknessLevel : UInt8 = 128
+		let setDarknessPacket = MakePacket(command_SetDarkness,payload: [darknessLevel])
+		print("Setting darkness...")
+		peripheral.writeValue(setDarknessPacket, for: control, type: .withoutResponse)
 		/*
 				 
 		 3. Command format: 0x22 0x21 [CMD] 0x00 [LEN_L] [LEN_H] [PAYLOAD...] [CRC8] 0xFF
@@ -663,10 +727,15 @@ struct PrinterView : View
 			let debugColour = printer.debugColour
 			let servicesDebug = printer.services.count > 0 ? "(\(printer.services.count) services)" : ""
 			let batteryDebug = printer.batteryLevelPercent.map{ "\($0)%" } ?? "?"
+			let statusDebug = printer.lastStatus.map{ "\($0)" } ?? "?"
+			let tempDebug = printer.tempratureCentigrade.map{ "\($0)oC" } ?? "?"
+			let tempIcon = printer.tempratureCentigrade != nil ? "thermometer.medium" : "thermometer.medium.slash"
 			
 			Label("\(printer.name) \(servicesDebug) \(printer.state)",systemImage: "printer.fill")
 				.background(debugColour)
-			Label("Battery: \(batteryDebug)",systemImage: printer.batteryLevelIconName )
+			Label("\(batteryDebug)",systemImage: printer.batteryLevelIconName )
+			Label(tempDebug,systemImage: tempIcon )
+			Label("Status: \(statusDebug)", systemImage: printer.printerStatusIconName )
 			if let error = printer.error
 			{
 				Label(error,systemImage: "exclamationmark.triangle.fill")
