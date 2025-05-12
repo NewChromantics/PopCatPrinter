@@ -4,6 +4,7 @@ import Combine
 
 
 
+
 extension CBCharacteristic
 {
 	var name : String
@@ -825,13 +826,16 @@ public class MXW01Peripheral : NSObject, BluetoothPeripheralHandler, CBPeriphera
 	
 
 
-
-
-func imageToPixels<PixelFormat>(_ image: NSImage,convertPixel:(_ r:UInt8,_ g:UInt8,_ b:UInt8,_ a:UInt8)->PixelFormat) -> [[PixelFormat]]
+func imageToPixels<PixelFormat>(_ image: UIImage,convertPixel:(_ r:UInt8,_ g:UInt8,_ b:UInt8,_ a:UInt8)->PixelFormat) throws -> [[PixelFormat]]
 {
 	var rows = [[PixelFormat]]()
+
+	guard let imageCg = image.cgImage else
+	{
+		throw PrintError("Failed to get cg image from image")
+	}
+	let pixelData = imageCg.dataProvider!.data
 	
-	let pixelData = (image.cgImage(forProposedRect: nil, context: nil, hints: nil)!).dataProvider!.data
 	let data: UnsafePointer<UInt8> = CFDataGetBytePtr(pixelData)
 	
 	for y in 0..<Int(image.size.height) 
@@ -856,10 +860,10 @@ func imageToPixels<PixelFormat>(_ image: NSImage,convertPixel:(_ r:UInt8,_ g:UIn
 	return rows
 }
 
-// Get pixels from an NSImage
-func imageToPixelsOneBit(_ image: NSImage,brightnessThreshold:UInt8) -> [[Bool]]
+// Get pixels from an UIImage
+func imageToPixelsOneBit(_ image: UIImage,brightnessThreshold:UInt8) throws -> [[Bool]]
 {
-	let output = imageToPixels(image)
+	let output = try imageToPixels(image)
 	{
 		r,g,b,a in
 		let pixel = r > brightnessThreshold
@@ -868,9 +872,9 @@ func imageToPixelsOneBit(_ image: NSImage,brightnessThreshold:UInt8) -> [[Bool]]
 	return output
 }
 
-func imageToPixelsFourBit(_ image: NSImage) -> [[UInt8]]
+func imageToPixelsFourBit(_ image: UIImage) throws -> [[UInt8]]
 {
-	let output = imageToPixels(image)
+	let output = try imageToPixels(image)
 	{
 		r,g,b,a in
 		//let brightness = (Double(r)+Double(g)+Double(b)) / (255.0*3.0)
@@ -881,4 +885,5 @@ func imageToPixelsFourBit(_ image: NSImage) -> [[UInt8]]
 	}
 	return output
 }
+
 

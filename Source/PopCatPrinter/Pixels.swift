@@ -2,6 +2,10 @@ import SwiftUI
 
 
 
+
+
+
+
 struct Pixel32
 {
 	var a: UInt8
@@ -15,7 +19,7 @@ struct Pixel32
 	static let black = Pixel32(a:255,r:0,g:0,b:0)
 }
 
-func pixelsToImage(pixels:[[Bool]]) -> NSImage?
+func pixelsToImage(pixels:[[Bool]]) -> UIImage?
 {
 	func BitToPixel(bit:Bool) -> Pixel32
 	{
@@ -25,7 +29,7 @@ func pixelsToImage(pixels:[[Bool]]) -> NSImage?
 }
 
 
-func pixelsToImage(pixels:[[UInt8]]) -> NSImage?
+func pixelsToImage(pixels:[[UInt8]]) -> UIImage?
 {
 	func NibbleToPixel(nibble:UInt8) -> Pixel32
 	{
@@ -37,7 +41,7 @@ func pixelsToImage(pixels:[[UInt8]]) -> NSImage?
 	return pixelsToImage( pixels:pixels, convert:NibbleToPixel )
 }
 
-func pixelsToImage<PixelFormat>(pixels:[[PixelFormat]],convert:(PixelFormat)->Pixel32) -> NSImage? 
+func pixelsToImage<PixelFormat>(pixels:[[PixelFormat]],convert:(PixelFormat)->Pixel32) -> UIImage? 
 {
 	let height = pixels.count
 	let width = pixels[0].count
@@ -71,6 +75,10 @@ func pixelsToImage<PixelFormat>(pixels:[[PixelFormat]],convert:(PixelFormat)->Pi
 	)
 	else { return nil }
 	
-	return NSImage(cgImage: cgim, size: CGSize(width: width, height: height))
+#if canImport(UIKit)//ios
+	return UIImage(cgImage: cgim)
+#else
+	return UIImage(cgImage: cgim, size: CGSize(width: width, height: height))
+#endif
 }
 

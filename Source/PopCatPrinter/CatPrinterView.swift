@@ -8,7 +8,7 @@ public struct PrinterView<PrinterType> : View where PrinterType:Printer
 {
 	@StateObject var printer : PrinterType
 	
-	var sourceImage : NSImage
+	var sourceImage : UIImage
 	@State var error : Error? = nil
 	var printProgressPercentFloat : Float? {	printProgressPercent.map{ Float($0) / 100.0 } }
 	@State var printProgressPercent : Int? = nil
@@ -16,9 +16,9 @@ public struct PrinterView<PrinterType> : View where PrinterType:Printer
 	@State var brightnessThresholdFloat : Float = 0.5
 	var brightnessThreshold : UInt8	{	UInt8( brightnessThresholdFloat * 255.0 )	}
 	@State var oneBitPixels : [[Bool]]? = nil
-	@State var oneBitImage : NSImage? = nil
+	@State var oneBitImage : UIImage? = nil
 	@State var fourBitPixels : [[UInt8]]? = nil
-	@State var fourBitImage : NSImage? = nil
+	@State var fourBitImage : UIImage? = nil
 	
 	@State var printerDarknessFloat : Float = 0.5
 	var printerDarknessPercent : Int { Int(printerDarknessFloat*100.0) }
@@ -27,17 +27,29 @@ public struct PrinterView<PrinterType> : View where PrinterType:Printer
 	var printRowDelayMs : Int	{	Int( printRowDelayMsFloat )	}
 	
 	
-	public init(printer: PrinterType, sourceImage: NSImage)
+	public init(printer: PrinterType, sourceImage: UIImage)
 	{
 		self._printer = StateObject(wrappedValue: printer)
 		self.sourceImage = sourceImage
 	}
-	
-	func UpdateThresholdedImage()
+
+	func UpdateThresholdedImageNoThrow()
 	{
-		oneBitPixels = imageToPixelsOneBit( sourceImage, brightnessThreshold: brightnessThreshold )
+		do
+		{
+			try UpdateThresholdedImage()
+		}
+		catch
+		{
+			print(error.localizedDescription)
+		}
+	}
+	
+	func UpdateThresholdedImage() throws
+	{
+		oneBitPixels = try imageToPixelsOneBit( sourceImage, brightnessThreshold: brightnessThreshold )
 		oneBitImage = pixelsToImage( pixels: oneBitPixels! )
-		fourBitPixels = imageToPixelsFourBit( sourceImage )
+		fourBitPixels = try imageToPixelsFourBit( sourceImage )
 		fourBitImage = pixelsToImage( pixels: fourBitPixels! )
 	}
 	
@@ -53,7 +65,7 @@ public struct PrinterView<PrinterType> : View where PrinterType:Printer
 			error = nil
 			do
 			{
-				UpdateThresholdedImage()
+				try UpdateThresholdedImage()
 				OnPrintProgress(percent: 0)
 				try await printer.PrintOneBitImage(pixels: oneBitPixels!,darkness: self.printerDarknessFloat,printRowDelayMs: self.printRowDelayMs, onProgress: {self.OnPrintProgress(percent:$0)} )
 			}
@@ -71,7 +83,7 @@ public struct PrinterView<PrinterType> : View where PrinterType:Printer
 		{
 			do
 			{
-				UpdateThresholdedImage()
+				try UpdateThresholdedImage()
 				try await printer.PrintFourBitImage(pixels: fourBitPixels!,darkness: self.printerDarknessFloat,printRowDelayMs: self.printRowDelayMs, onProgress: {self.OnPrintProgress(percent:$0)} )
 			}
 			catch
@@ -113,17 +125,19 @@ public struct PrinterView<PrinterType> : View where PrinterType:Printer
 	{
 		VStack(alignment: .leading,spacing: 10)
 		{
+#if os(tvOS)
+#else
 			Slider(value: $brightnessThresholdFloat, in: 0...1)
 			{
 				Text("Brightness threshold \(brightnessThreshold)")
 			}
 			.onChange(of: self.brightnessThresholdFloat )
 			{
-				UpdateThresholdedImage()
+				UpdateThresholdedImageNoThrow()
 			}
 			.onAppear
 			{
-				UpdateThresholdedImage()
+				UpdateThresholdedImageNoThrow()
 			}
 			
 			Slider(value: $printerDarknessFloat, in: 0...1)
@@ -135,12 +149,13 @@ public struct PrinterView<PrinterType> : View where PrinterType:Printer
 			{
 				Text("Printer Row Delay Milliseconds \(printRowDelayMs)")
 			}
+			#endif
 			
 			HStack
 			{
 				VStack
 				{
-					Image( nsImage: oneBitImage ?? sourceImage )
+					Image( uiImage: oneBitImage ?? sourceImage )
 						.resizable()
 						.scaledToFit()
 					
@@ -152,7 +167,7 @@ public struct PrinterView<PrinterType> : View where PrinterType:Printer
 				
 				VStack
 				{
-					Image( nsImage: fourBitImage ?? sourceImage )
+					Image( uiImage: fourBitImage ?? sourceImage )
 						.resizable()
 						.scaledToFit()
 					
@@ -181,9 +196,12 @@ public struct PrinterView<PrinterType> : View where PrinterType:Printer
 				.frame(maxWidth:.infinity)
 				.foregroundStyle(.white)
 				.background(.red)
+#if os(tvOS)
+#else
 				.onTapGesture {
 					self.error = nil
 				}
+#endif
 		}
 	}
 	
@@ -204,7 +222,7 @@ public struct PrinterView<PrinterType> : View where PrinterType:Printer
 public struct CatPrinterManagerView : View 
 {
 	@StateObject var printers = CatPrinterManager()
-	var printImage = NSImage(named:"HoltsHitAndRun")!
+	var printImage = UIImage(named:"HoltsHitAndRun")!
 	
 	public var body: some View 
 	{
@@ -248,5 +266,5 @@ public struct CatPrinterManagerView : View
 {
 	//CatPrinterManagerView()
 	var fakePrinter = FakePrinter()
-	PrinterView(printer: fakePrinter, sourceImage: NSImage(named:"HoltsHitAndRun")! )
+	PrinterView(printer: fakePrinter, sourceImage: UIImage(named:"HoltsHitAndRun")! )
 }
