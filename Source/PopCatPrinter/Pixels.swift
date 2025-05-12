@@ -19,7 +19,7 @@ struct Pixel32
 	static let black = Pixel32(a:255,r:0,g:0,b:0)
 }
 
-func pixelsToImage(pixels:[[Bool]]) -> UIImage?
+public func pixelsToImage(pixels:[[Bool]]) -> UIImage?
 {
 	func BitToPixel(bit:Bool) -> Pixel32
 	{
@@ -29,7 +29,7 @@ func pixelsToImage(pixels:[[Bool]]) -> UIImage?
 }
 
 
-func pixelsToImage(pixels:[[UInt8]]) -> UIImage?
+public func pixelsToImage(pixels:[[UInt8]]) -> UIImage?
 {
 	func NibbleToPixel(nibble:UInt8) -> Pixel32
 	{

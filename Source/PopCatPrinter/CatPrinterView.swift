@@ -2,6 +2,50 @@ import SwiftUI
 
 
 
+
+//	because the peripheral is a class, it needs it's own view 
+//	with @StateObject in order to see changes
+public struct PrinterStatusView<PrinterType> : View where PrinterType:Printer 
+{
+	@StateObject var printer : PrinterType
+	
+	public init(printer: PrinterType)
+	{
+		self._printer = StateObject(wrappedValue: printer)
+	}
+	
+
+	
+	public var body: some View
+	{
+		VStack(alignment: .leading)
+		{
+			//let servicesDebug = printer.services.count > 0 ? "(\(printer.services.count) services)" : ""
+			let batteryDebug = printer.batteryLevelPercent.map{ "\($0)%" } ?? "?"
+			let statusDebug = printer.status.map{ "\($0)" } ?? "?"
+			let tempDebug = printer.tempratureCentigrade.map{ "\($0)oC" } ?? "?"
+			let tempIcon = printer.tempratureCentigrade != nil ? "thermometer.medium" : "thermometer.medium.slash"
+			let printerStatusDebug = printer.status.map{ "\($0)" } ?? "??"
+			
+			Label("\(printer.name) \(printerStatusDebug)",systemImage: "printer.fill")
+			Label("\(batteryDebug)",systemImage: printer.batteryLevelIconName )
+			Label(tempDebug,systemImage: tempIcon )
+			Label("Status: \(statusDebug)", systemImage: printer.printerStatusIconName )
+			let version = printer.version ?? "?"
+			Label("Version \(version)",systemImage: "info.square.fill")
+			
+			let hasError = printer.errorString != nil
+			let error = printer.errorString ?? ""
+			Label(error,systemImage: "exclamationmark.triangle.fill")
+				.foregroundStyle( hasError ? .white : .clear )
+				.background( hasError ? .red : .clear)
+			
+		}
+	}
+}
+
+
+
 //	because the peripheral is a class, it needs it's own view 
 //	with @StateObject in order to see changes
 public struct PrinterView<PrinterType> : View where PrinterType:Printer 
@@ -93,33 +137,6 @@ public struct PrinterView<PrinterType> : View where PrinterType:Printer
 		}
 	}
 	
-	@ViewBuilder func StatusView() -> some View
-	{
-		VStack(alignment: .leading,spacing: 10)
-		{
-			//let servicesDebug = printer.services.count > 0 ? "(\(printer.services.count) services)" : ""
-			let batteryDebug = printer.batteryLevelPercent.map{ "\($0)%" } ?? "?"
-			let statusDebug = printer.status.map{ "\($0)" } ?? "?"
-			let tempDebug = printer.tempratureCentigrade.map{ "\($0)oC" } ?? "?"
-			let tempIcon = printer.tempratureCentigrade != nil ? "thermometer.medium" : "thermometer.medium.slash"
-			let printerStatusDebug = printer.status.map{ "\($0)" } ?? "??"
-			
-			Label("\(printer.name) \(printerStatusDebug)",systemImage: "printer.fill")
-			Label("\(batteryDebug)",systemImage: printer.batteryLevelIconName )
-			Label(tempDebug,systemImage: tempIcon )
-			Label("Status: \(statusDebug)", systemImage: printer.printerStatusIconName )
-			if let error = printer.errorString
-			{
-				Label(error,systemImage: "exclamationmark.triangle.fill")
-			}
-			
-			if let version = printer.version
-			{
-				Label("Version \(version)",systemImage: "info.square.fill")
-			}
-			
-		}
-	}
 	
 	@ViewBuilder func ImageAndPrintView() -> some View
 	{
@@ -196,12 +213,12 @@ public struct PrinterView<PrinterType> : View where PrinterType:Printer
 				.frame(maxWidth:.infinity)
 				.foregroundStyle(.white)
 				.background(.red)
-#if os(tvOS)
-#else
+//#if os(tvOS)
+//#else
 				.onTapGesture {
 					self.error = nil
 				}
-#endif
+//#endif
 		}
 	}
 	
@@ -210,7 +227,7 @@ public struct PrinterView<PrinterType> : View where PrinterType:Printer
 		ErrorView()
 		HStack(alignment: .top)
 		{
-			StatusView()
+			PrinterStatusView(printer: printer)
 			ImageAndPrintView()
 		}
 		.padding(20)
@@ -266,5 +283,6 @@ public struct CatPrinterManagerView : View
 {
 	//CatPrinterManagerView()
 	var fakePrinter = FakePrinter()
-	PrinterView(printer: fakePrinter, sourceImage: UIImage(named:"HoltsHitAndRun")! )
+	//PrinterView(printer: fakePrinter, sourceImage: UIImage(named:"HoltsHitAndRun")! )
+	PrinterStatusView(printer: fakePrinter)
 }

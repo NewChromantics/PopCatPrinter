@@ -76,7 +76,7 @@ public struct PrintError : LocalizedError
 public class CatPrinterManager : ObservableObject
 {
 	var bluetoothManager : BluetoothManager!
-	@Published var mxw01s = [MXW01Peripheral]()
+	@Published public var mxw01s = [MXW01Peripheral]()
 	static let mxw10DeviceName = "MXW01"
 	
 	public init()
@@ -861,7 +861,7 @@ func imageToPixels<PixelFormat>(_ image: UIImage,convertPixel:(_ r:UInt8,_ g:UIn
 }
 
 // Get pixels from an UIImage
-func imageToPixelsOneBit(_ image: UIImage,brightnessThreshold:UInt8) throws -> [[Bool]]
+public func imageToPixelsOneBit(_ image: UIImage,brightnessThreshold:UInt8) throws -> [[Bool]]
 {
 	let output = try imageToPixels(image)
 	{
@@ -872,7 +872,7 @@ func imageToPixelsOneBit(_ image: UIImage,brightnessThreshold:UInt8) throws -> [
 	return output
 }
 
-func imageToPixelsFourBit(_ image: UIImage) throws -> [[UInt8]]
+public func imageToPixelsFourBit(_ image: UIImage) throws -> [[UInt8]]
 {
 	let output = try imageToPixels(image)
 	{
