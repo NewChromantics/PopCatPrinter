@@ -1,0 +1,252 @@
+import SwiftUI
+
+
+
+//	because the peripheral is a class, it needs it's own view 
+//	with @StateObject in order to see changes
+public struct PrinterView<PrinterType> : View where PrinterType:Printer 
+{
+	@StateObject var printer : PrinterType
+	
+	var sourceImage : NSImage
+	@State var error : Error? = nil
+	var printProgressPercentFloat : Float? {	printProgressPercent.map{ Float($0) / 100.0 } }
+	@State var printProgressPercent : Int? = nil
+	
+	@State var brightnessThresholdFloat : Float = 0.5
+	var brightnessThreshold : UInt8	{	UInt8( brightnessThresholdFloat * 255.0 )	}
+	@State var oneBitPixels : [[Bool]]? = nil
+	@State var oneBitImage : NSImage? = nil
+	@State var fourBitPixels : [[UInt8]]? = nil
+	@State var fourBitImage : NSImage? = nil
+	
+	@State var printerDarknessFloat : Float = 0.5
+	var printerDarknessPercent : Int { Int(printerDarknessFloat*100.0) }
+	
+	@State var printRowDelayMsFloat : Float = Float(MXW01Peripheral.defaultPrintRowDelayMs)
+	var printRowDelayMs : Int	{	Int( printRowDelayMsFloat )	}
+	
+	
+	public init(printer: PrinterType, sourceImage: NSImage)
+	{
+		self._printer = StateObject(wrappedValue: printer)
+		self.sourceImage = sourceImage
+	}
+	
+	func UpdateThresholdedImage()
+	{
+		oneBitPixels = imageToPixelsOneBit( sourceImage, brightnessThreshold: brightnessThreshold )
+		oneBitImage = pixelsToImage( pixels: oneBitPixels! )
+		fourBitPixels = imageToPixelsFourBit( sourceImage )
+		fourBitImage = pixelsToImage( pixels: fourBitPixels! )
+	}
+	
+	func OnPrintProgress(percent:Int)
+	{
+		printProgressPercent = percent
+	}
+	
+	func OnClickedPrintOneBit()
+	{
+		Task
+		{
+			error = nil
+			do
+			{
+				UpdateThresholdedImage()
+				OnPrintProgress(percent: 0)
+				try await printer.PrintOneBitImage(pixels: oneBitPixels!,darkness: self.printerDarknessFloat,printRowDelayMs: self.printRowDelayMs, onProgress: {self.OnPrintProgress(percent:$0)} )
+			}
+			catch
+			{
+				self.error = error
+			}
+		}
+	}
+	
+	func OnClickedPrintFourBit()
+	{
+		error = nil
+		Task
+		{
+			do
+			{
+				UpdateThresholdedImage()
+				try await printer.PrintFourBitImage(pixels: fourBitPixels!,darkness: self.printerDarknessFloat,printRowDelayMs: self.printRowDelayMs, onProgress: {self.OnPrintProgress(percent:$0)} )
+			}
+			catch
+			{
+				self.error = error
+			}
+		}
+	}
+	
+	@ViewBuilder func StatusView() -> some View
+	{
+		VStack(alignment: .leading,spacing: 10)
+		{
+			//let servicesDebug = printer.services.count > 0 ? "(\(printer.services.count) services)" : ""
+			let batteryDebug = printer.batteryLevelPercent.map{ "\($0)%" } ?? "?"
+			let statusDebug = printer.status.map{ "\($0)" } ?? "?"
+			let tempDebug = printer.tempratureCentigrade.map{ "\($0)oC" } ?? "?"
+			let tempIcon = printer.tempratureCentigrade != nil ? "thermometer.medium" : "thermometer.medium.slash"
+			let printerStatusDebug = printer.status.map{ "\($0)" } ?? "??"
+			
+			Label("\(printer.name) \(printerStatusDebug)",systemImage: "printer.fill")
+			Label("\(batteryDebug)",systemImage: printer.batteryLevelIconName )
+			Label(tempDebug,systemImage: tempIcon )
+			Label("Status: \(statusDebug)", systemImage: printer.printerStatusIconName )
+			if let error = printer.errorString
+			{
+				Label(error,systemImage: "exclamationmark.triangle.fill")
+			}
+			
+			if let version = printer.version
+			{
+				Label("Version \(version)",systemImage: "info.square.fill")
+			}
+			
+		}
+	}
+	
+	@ViewBuilder func ImageAndPrintView() -> some View
+	{
+		VStack(alignment: .leading,spacing: 10)
+		{
+			Slider(value: $brightnessThresholdFloat, in: 0...1)
+			{
+				Text("Brightness threshold \(brightnessThreshold)")
+			}
+			.onChange(of: self.brightnessThresholdFloat )
+			{
+				UpdateThresholdedImage()
+			}
+			.onAppear
+			{
+				UpdateThresholdedImage()
+			}
+			
+			Slider(value: $printerDarknessFloat, in: 0...1)
+			{
+				Text("Printer Darkness \(printerDarknessPercent)%")
+			}
+			
+			Slider(value: $printRowDelayMsFloat, in: 0...100)
+			{
+				Text("Printer Row Delay Milliseconds \(printRowDelayMs)")
+			}
+			
+			HStack
+			{
+				VStack
+				{
+					Image( nsImage: oneBitImage ?? sourceImage )
+						.resizable()
+						.scaledToFit()
+					
+					Button(action:OnClickedPrintOneBit)
+					{
+						Text("Print One Bit")
+					}
+				}
+				
+				VStack
+				{
+					Image( nsImage: fourBitImage ?? sourceImage )
+						.resizable()
+						.scaledToFit()
+					
+					Button(action:OnClickedPrintFourBit)
+					{
+						Text("Print Four Bit")
+					}
+				}
+			}
+			
+			HStack
+			{
+				ProgressView(value: self.printProgressPercentFloat)
+				let progressDebug = printProgressPercent.map{ "\($0)%" } ?? " "
+				Text("Progress \(progressDebug)")
+			}
+		}
+	}
+	
+	@ViewBuilder func ErrorView() -> some View
+	{
+		if let error 
+		{
+			Text(error.localizedDescription)
+				.padding(5)
+				.frame(maxWidth:.infinity)
+				.foregroundStyle(.white)
+				.background(.red)
+				.onTapGesture {
+					self.error = nil
+				}
+		}
+	}
+	
+	public var body: some View
+	{
+		ErrorView()
+		HStack(alignment: .top)
+		{
+			StatusView()
+			ImageAndPrintView()
+		}
+		.padding(20)
+	}
+}
+
+
+
+public struct CatPrinterManagerView : View 
+{
+	@StateObject var printers = CatPrinterManager()
+	var printImage = NSImage(named:"HoltsHitAndRun")!
+	
+	public var body: some View 
+	{
+		let bluetoothManager = printers.bluetoothManager!
+		VStack
+		{
+			Text("Printers: \(printers.mxw01s.count)")
+			VStack
+			{
+				ForEach( printers.mxw01s )
+				{
+					(device:MXW01Peripheral) in
+					PrinterView(printer: device, sourceImage: printImage)
+				}
+			}
+			
+			Text("Devices: \(bluetoothManager.devices.count)")
+			Text("Manager State: \(bluetoothManager.lastState)")
+			Text("Is Scanning: \(bluetoothManager.isScanning)")
+			if printers.mxw01s.count == 0
+			{
+				List
+				{
+					ForEach( bluetoothManager.devices )
+					{
+						device in
+						let debugColour = device.debugColour
+						let servicesDebug = device.services.count > 0 ? "(\(device.services.count) services)" : ""
+						Text("Device Name: \(device.name) \(servicesDebug) \(device.state)")
+							.background(debugColour)
+						
+					}
+				}
+			}
+		}	
+	}
+}
+
+
+#Preview
+{
+	//CatPrinterManagerView()
+	var fakePrinter = FakePrinter()
+	PrinterView(printer: fakePrinter, sourceImage: NSImage(named:"HoltsHitAndRun")! )
+}

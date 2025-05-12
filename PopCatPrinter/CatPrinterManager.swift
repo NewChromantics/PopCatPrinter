@@ -3,6 +3,23 @@ import CoreBluetooth
 import Combine
 
 
+
+extension CBCharacteristic
+{
+	var name : String
+	{
+		switch self.uuid
+		{
+			case MXW01Peripheral.ControlUid:	return "Control"
+			case MXW01Peripheral.NotificationUid:	return "Notification"
+			case MXW01Peripheral.DataUid:	return "Data"
+			default:	return "\(self.uuid)"
+		}
+	}
+}
+
+
+
 private func checksum(_ data: [UInt8], startIndex: Int, amount: Int) -> UInt8 {
 	var b2: UInt8 = 0
 	for value in data[startIndex..<(startIndex + amount)] {
@@ -53,36 +70,8 @@ public struct PrintError : LocalizedError
 
 
 
-//	Printer found: "MXW01" - {"id":"Yl2JxVBQJjs7IRbZDVyrWQ=="}
-
 //	https://github.com/rbaron/catprinter/compare/main...jeremy46231:MXW01-catprinter:main
 //	https://catprinter.vercel.app/
-/*
- Printer Protocol
- MXW01 Thermal Printer Protocol Summary:
- 
- 1. Connect via Bluetooth LE to service UUID: 0000ae30-0000-1000-8000-00805f9b34fb
- 2. Communication happens through three characteristics:
- - Control write: 0000ae01-0000-1000-8000-00805f9b34fb
- - Notification: 0000ae02-0000-1000-8000-00805f9b34fb
- - Data write: 0000ae03-0000-1000-8000-00805f9b34fb
- 
- 3. Command format: 0x22 0x21 [CMD] 0x00 [LEN_L] [LEN_H] [PAYLOAD...] [CRC8] 0xFF
- 4. Print process:
- a. Set intensity (0xA2)
- b. Request status (0xA1)
- c. Send print request (0xA9)
- d. Transfer data in chunks
- e. Flush data (0xAD)
- f. Wait for print complete notification (0xAA)
- 
- 5. Image encoding:
- - 1-bit monochrome (black/white)
- - 384 pixels wide (48 bytes)
- - Rows are sent sequentially
- - Image is rotated 180° before sending
- */
-
 public class CatPrinterManager : ObservableObject
 {
 	var bluetoothManager : BluetoothManager!
@@ -107,33 +96,6 @@ public class CatPrinterManager : ObservableObject
 }
 
 
-extension CBPeripheral
-{
-	func GetService(serviceUid:CBUUID) -> CBService?
-	{
-		let services = self.services ?? []
-		let matches = services.filter
-		{
-			$0.uuid == serviceUid
-		}
-		return matches.first
-	}
-}
-
-extension CBService
-{
-	func GetCharacteristic(characteristicUid:CBUUID) -> CBCharacteristic?
-	{
-		let chars = self.characteristics ?? []
-		let matches = chars.filter
-		{
-			$0.uuid == characteristicUid
-		}
-		return matches.first
-	}
-}
-
-
 extension UInt16
 {
 	var littleEndianBytes : [UInt8]
@@ -148,81 +110,6 @@ extension UInt16
 
 
 
-public protocol BluetoothPeripheralHandler
-{
-	func OnConnected()
-}
-
-extension CBCharacteristic
-{
-	var name : String
-	{
-		switch self.uuid
-		{
-			case MXW01Peripheral.ControlUid:	return "Control"
-			case MXW01Peripheral.NotificationUid:	return "Notification"
-			case MXW01Peripheral.DataUid:	return "Data"
-			default:	return "\(self.uuid)"
-		}
-	}
-}
-
-func GetBatteryIconName(percent:Int?) -> String
-{
-	guard let percent else
-	{
-		return "questionmark.app.fill"
-	}
-	if percent > 75
-	{
-		return "battery.100percent"
-	}
-	if percent > 50
-	{
-		return "battery.75percent"
-	}
-	if percent > 25
-	{
-		return "battery.50percent"
-	}
-	if percent > 0
-	{
-		return "battery.25percent"
-	}
-	return "battery.0percent"
-}
-
-public class PromiseWrapper<ResolvedValue>
-{
-	var future : Future<ResolvedValue,any Error>!
-	private var resolvingFunctor : ((Result<ResolvedValue,any Error>)->Void)!
-	
-	//public init(resolvingFunctor:@escaping (Result<ResolvedValue,any Error>)->Void)
-	public init()
-	{
-		let future = Future<ResolvedValue,any Error>()
-		{
-			promise in
-			self.resolvingFunctor = promise
-		}
-		self.future = future
-	}
-	
-	public func Resolve(_ data:ResolvedValue)
-	{
-		resolvingFunctor( Result.success(data) )
-	}
-	
-	public func Reject(_ error:Error)
-	{
-		resolvingFunctor( Result.failure(error) )
-	}
-	
-	public func Wait() async throws -> ResolvedValue
-	{
-		try await self.future.value
-	}
-}
 
 struct Response
 {
@@ -231,37 +118,24 @@ struct Response
 	var commandName : String { MXW01Peripheral.Command.GetName(self.command)	}
 }
 
-class MXW01Peripheral : NSObject, BluetoothPeripheralHandler, CBPeripheralDelegate, Identifiable, ObservableObject
-{
-	enum PrinterStatus
-	{
-		case Idle,PaperMissing,NotOkay
-	}
-	
-	private var peripheral : CBPeripheral
-	var id : UUID	{	peripheral.identifier	}
-	var services : [CBService]	{	peripheral.services ?? []	}
-	var name : String	{	peripheral.name ?? "\(peripheral.identifier)"	}
-	var state : CBPeripheralState	{	peripheral.state	}
-	//@Published var state : CBPeripheralState = .disconnected
-	@Published var lastError : Error? = nil
-	@Published var lastStatus : PrinterStatus? = nil
-	@Published var batteryLevelPercent : Int? = nil
-	@Published var tempratureCentigrade : Int? = nil
-	@Published var printerVersion : String? = nil
-	var error : String?	{	lastError.map{ "\($0.localizedDescription)"	}	}
-	var batteryLevelIconName : String	{	GetBatteryIconName(percent: batteryLevelPercent)	}
 
-	var printerStatusIconName : String	
-	{
-		switch lastStatus
-		{
-			case nil:	return "questionmark.app.fill"
-			case .PaperMissing:	return "newspaper"
-			case .NotOkay:	return "exclamationmark.triangle.fill"
-			case .Idle:	return "checkmark.seal"
-		}
-	}
+//	todo: make a generic Printer protocol (but with an observable state)
+//		and don't expose the low level MXW01 out of the lib
+public class MXW01Peripheral : NSObject, BluetoothPeripheralHandler, CBPeripheralDelegate, Identifiable, Printer
+{
+	private var peripheral : CBPeripheral
+	public var id : UUID	{	peripheral.identifier	}
+	var services : [CBService]	{	peripheral.services ?? []	}
+	public var name : String	{	peripheral.name ?? "\(peripheral.identifier)"	}
+	var state : CBPeripheralState	{	peripheral.state	}
+	
+	@Published public var status: PrinterStatus?
+	
+	@Published public var version: String?
+	@Published public var error : Error? = nil
+	@Published public var batteryLevelPercent : Int? = nil
+	@Published public var tempratureCentigrade : Int? = nil
+
 
 	//	gr: store these characteristics
 	static let ControlUid =		CBUUID(string: "0000ae01-0000-1000-8000-00805f9b34fb")
@@ -297,7 +171,7 @@ class MXW01Peripheral : NSObject, BluetoothPeripheralHandler, CBPeripheralDelega
 	var data : CBCharacteristic? = nil
 	
 	var pendingNotification = [UInt8:PromiseWrapper<Response>]()
-	static let defaultPrintRowDelayMs = 40
+	static let defaultPrintRowDelayMs = 30	//	20 too fast for 4bpp
 	
 	init(peripheral: CBPeripheral) 
 	{
@@ -308,26 +182,6 @@ class MXW01Peripheral : NSObject, BluetoothPeripheralHandler, CBPeripheralDelega
 		self.peripheral.delegate = self
 	}
 	
-	var debugColour : Color
-	{
-		let IsConnected = state == .connected
-		let IsConnecting = state == .connecting
-		if self.lastError != nil
-		{
-			return .red
-		}
-		
-		if IsConnecting
-		{
-			return .yellow
-		}
-		if IsConnected
-		{
-			return .green
-		}
-		
-		return .clear		
-	}
 	
 	func OnStateChanged()
 	{
@@ -341,7 +195,7 @@ class MXW01Peripheral : NSObject, BluetoothPeripheralHandler, CBPeripheralDelega
 		}
 	}
 	
-	func OnConnected() 
+	public func OnConnected() 
 	{
 		print("Mxw01 connected!")
 		OnStateChanged()
@@ -355,16 +209,16 @@ class MXW01Peripheral : NSObject, BluetoothPeripheralHandler, CBPeripheralDelega
 		DispatchQueue.main.async
 		{
 			@MainActor in
-			self.lastError = error
+			self.error = error
 		}
 	}
 	
-	func peripheral(_ peripheral: CBPeripheral, didDiscoverServices error: Error?) 
+	public func peripheral(_ peripheral: CBPeripheral, didDiscoverServices error: Error?) 
 	{
 		if let error 
 		{
 			print("didDiscoverServices error \(error.localizedDescription)")
-			self.lastError = error
+			self.error = error
 			return
 		}
 		
@@ -381,12 +235,12 @@ class MXW01Peripheral : NSObject, BluetoothPeripheralHandler, CBPeripheralDelega
 		
 	}
 	
-	func peripheral(_ peripheral: CBPeripheral, didDiscoverCharacteristicsFor service: CBService, error: Error?) 
+	public func peripheral(_ peripheral: CBPeripheral, didDiscoverCharacteristicsFor service: CBService, error: Error?) 
 	{
 		if let error 
 		{
 			print("didDiscoverCharacteristicsFor error \(error.localizedDescription)")
-			self.lastError = error
+			self.error = error
 			return
 		}
 		
@@ -419,7 +273,7 @@ class MXW01Peripheral : NSObject, BluetoothPeripheralHandler, CBPeripheralDelega
 	}
 	
 	//	catch any errors from notification update subscriptions
-	func peripheral(_ peripheral: CBPeripheral, didUpdateNotificationStateFor characteristic: CBCharacteristic, error: Error?) 
+	public func peripheral(_ peripheral: CBPeripheral, didUpdateNotificationStateFor characteristic: CBCharacteristic, error: Error?) 
 	{
 		if let error 
 		{
@@ -430,7 +284,7 @@ class MXW01Peripheral : NSObject, BluetoothPeripheralHandler, CBPeripheralDelega
 		print("Characteristic Notification for \(characteristic.name) now \(characteristic.isNotifying)")
 	}
 
-	func peripheral(_ peripheral: CBPeripheral, didUpdateValueFor characteristic: CBCharacteristic, error: Error?) 
+	public func peripheral(_ peripheral: CBPeripheral, didUpdateValueFor characteristic: CBCharacteristic, error: Error?) 
 	{
 		do
 		{
@@ -456,11 +310,11 @@ class MXW01Peripheral : NSObject, BluetoothPeripheralHandler, CBPeripheralDelega
 		}
 		catch
 		{
-			self.lastError = error
+			self.error = error
 		}
 	}
 	
-	func peripheral(_ peripheral: CBPeripheral, didWriteValueFor characteristic: CBCharacteristic, error: Error?) 
+	public func peripheral(_ peripheral: CBPeripheral, didWriteValueFor characteristic: CBCharacteristic, error: Error?) 
 	{
 		if let error 
 		{
@@ -588,7 +442,7 @@ class MXW01Peripheral : NSObject, BluetoothPeripheralHandler, CBPeripheralDelega
 		DispatchQueue.main.async
 		{
 			@MainActor in
-			self.lastStatus = printerStatus
+			self.status = printerStatus
 			self.tempratureCentigrade = Int(temprature)
 			self.batteryLevelPercent = Int(batteryLevel)
 		}
@@ -735,10 +589,10 @@ class MXW01Peripheral : NSObject, BluetoothPeripheralHandler, CBPeripheralDelega
 			"XXXX    XXXX    XXXX    XXXX    XXXX",
 		]
 		let patternBools = pattern.map{ $0.map(CharToBool) }
-		try await PrintImage(imageRowBits: patternBools,darkness:255,printRowDelayMs:MXW01Peripheral.defaultPrintRowDelayMs, onSentRow: {_ in})
+		try await PrintOneBitImage(pixels: patternBools,darkness:1.0,printRowDelayMs:MXW01Peripheral.defaultPrintRowDelayMs, onProgress: {_ in})
 	}
 	
-	func PrintImage(imageRowBits:[[Bool]],darkness:UInt8,printRowDelayMs:Int,onSentRow:(Int)->Void) async throws
+	public func PrintOneBitImage(pixels:[[Bool]],darkness:Float,printRowDelayMs:Int,onProgress:(Int)->Void) async throws
 	{
 		try await WaitForIdleStatus()
 		
@@ -760,12 +614,11 @@ class MXW01Peripheral : NSObject, BluetoothPeripheralHandler, CBPeripheralDelega
 			}
 			return rowBytes
 		}
-		let linePackedBytes = imageRowBits.map{ PackLineBits($0) }
-		try await PrintPackedRows( linePackedBytes, pixelFormat: .OneBit, printRowDelayMs: printRowDelayMs, onSentRow: onSentRow )
+		let linePackedBytes = pixels.map{ PackLineBits($0) }
+		try await PrintPackedRows( linePackedBytes, pixelFormat: .OneBit, printRowDelayMs: printRowDelayMs, onProgress: onProgress )
 	}
 	
-	//	4 bit print
-	func PrintImage(imageRowNibbles:[[UInt8]],darkness:UInt8,printRowDelayMs:Int,onSentRow:(Int)->Void) async throws
+	public func PrintFourBitImage(pixels:[[UInt8]],darkness:Float,printRowDelayMs:Int,onProgress:(Int)->Void) async throws
 	{
 		try await WaitForIdleStatus()
 		
@@ -788,8 +641,8 @@ class MXW01Peripheral : NSObject, BluetoothPeripheralHandler, CBPeripheralDelega
 			}
 			return rowBytes
 		}
-		let linePackedBytes = imageRowNibbles.map{ PackLine($0) }
-		try await PrintPackedRows( linePackedBytes, pixelFormat: .FourBit, printRowDelayMs:printRowDelayMs, onSentRow: onSentRow )
+		let linePackedBytes = pixels.map{ PackLine($0) }
+		try await PrintPackedRows( linePackedBytes, pixelFormat: .FourBit, printRowDelayMs:printRowDelayMs, onProgress: onProgress )
 	}
 	
 	
@@ -808,7 +661,7 @@ class MXW01Peripheral : NSObject, BluetoothPeripheralHandler, CBPeripheralDelega
 		DispatchQueue.main.async
 		{
 			@MainActor in
-			self.printerVersion = versionString
+			self.version = versionString
 		}
 	}
 	
@@ -848,9 +701,10 @@ class MXW01Peripheral : NSObject, BluetoothPeripheralHandler, CBPeripheralDelega
 		return status
 	}
 	
-	func SetPrinterDarkness(_ darknessLevel:UInt8) 
+	func SetPrinterDarkness(_ darknessLevel:Float) 
 	{
-		let setDarknessPacket = MakePacket( Command.SetDarkness,payload: [darknessLevel])
+		let darkness8 = UInt8( darknessLevel * 255.0 )
+		let setDarknessPacket = MakePacket( Command.SetDarkness,payload: [darkness8])
 		print("Setting darkness to \(darknessLevel)...")
 		peripheral.writeValue(setDarknessPacket, for: control!, type: .withoutResponse)
 	}
@@ -876,7 +730,7 @@ class MXW01Peripheral : NSObject, BluetoothPeripheralHandler, CBPeripheralDelega
 		}
 	}
 	
-	func PrintPackedRows(_ linePackedBytes:[[UInt8]],pixelFormat:PrintMode,printRowDelayMs:Int,onSentRow:(Int)->Void) async throws
+	func PrintPackedRows(_ linePackedBytes:[[UInt8]],pixelFormat:PrintMode,printRowDelayMs:Int,onProgress:(Int)->Void) async throws
 	{
 		//	sniffed HD print
 		//	2221 A9    00 	0400 			F001 		3002 0000  
@@ -912,9 +766,9 @@ class MXW01Peripheral : NSObject, BluetoothPeripheralHandler, CBPeripheralDelega
 			//print("Sending \(chunk.map{Int($0)})")
 			peripheral.writeValue( chunk, for: self.data!, type: .withoutResponse)
 			
-			let percent = Double(i) / Double(allBytes.count)
-			let rowIndex = percent * Double(linePackedBytes.count)
-			onSentRow(Int(rowIndex))
+			let percent = (Double(i) / Double(allBytes.count)) * 100.0
+			
+			onProgress(Int(percent))
 			
 			await Task.sleep(milliseconds: printRowDelayMs)
 		}
@@ -972,180 +826,6 @@ class MXW01Peripheral : NSObject, BluetoothPeripheralHandler, CBPeripheralDelega
 
 
 
-struct BluetoothDevice : Identifiable, Hashable, Comparable
-{
-	static func < (lhs: BluetoothDevice, rhs: BluetoothDevice) -> Bool 
-	{
-		return lhs.name < rhs.name
-	}
-	
-	static func ==(lhs: BluetoothDevice, rhs: BluetoothDevice) -> Bool
-	{
-		return lhs.id == rhs.id
-	}
-	
-	func hash(into hasher: inout Hasher) 
-	{
-		hasher.combine(	id.hashValue)
-	}
-	
-	var id : UUID	{	deviceUid	}
-	var deviceUid : UUID
-	var name : String
-	var state : CBPeripheralState
-	var services : [CBService]
-	
-	var debugColour : Color
-	{
-		let IsConnected = state == .connected
-		let IsConnecting = state == .connecting
-
-		if IsConnecting
-		{
-			return .yellow
-		}
-		if IsConnected
-		{
-			return .green
-		}
-
-		return .clear		
-	}
-}
-
-
-extension CBManagerState : @retroactive CustomStringConvertible 
-{
-	public var description: String 
-	{
-		switch self
-		{
-			case CBManagerState.unknown:	return "unknown"
-			case CBManagerState.resetting:	return "resetting"
-			case CBManagerState.unsupported:	return "unsupported"
-			case CBManagerState.unauthorized:	return "unauthorized"
-			case CBManagerState.poweredOff:	return "poweredOff"
-			case CBManagerState.poweredOn:	return "poweredOn"
-			default:
-				return String(describing: self)
-		}
-	}
-}
-
-
-extension CBPeripheralState : @retroactive CustomStringConvertible 
-{
-	public var description: String 
-	{
-		switch self
-		{
-			case .connected:	return "connected"
-			case .connecting:	return "connecting"
-			case .disconnected:	return "disconnected"
-			case .disconnecting:	return "disconnecting"
-			default:
-				return String(describing: self)
-		}
-	}
-}
-
-class BluetoothManager : NSObject, CBCentralManagerDelegate, ObservableObject
-{
-	var centralManager : CBCentralManager!
-	var devices : [BluetoothDevice]	{	Array(deviceStates).sorted()	}
-	@Published var lastState : CBManagerState = .unknown
-	@Published var isScanning : Bool = false
-	@Published var deviceStates = Set<BluetoothDevice>()
-	var showNoNameDevices = false
-	
-	//	return a handler if you want this device to be connected
-	var onPeripheralFoundCallback : (CBPeripheral)->BluetoothPeripheralHandler?
-	
-	//	need to keep a strong reference to peripherals we're connecting to
-	//	gr: is now a callback interface
-	var connectingPeripherals = [UUID:BluetoothPeripheralHandler]()
-	
-	init(onPeripheralFound:@escaping(CBPeripheral)->BluetoothPeripheralHandler?=BluetoothManager.DefaultHandler)
-	{
-		self.onPeripheralFoundCallback = onPeripheralFound
-		super.init()
-		centralManager = CBCentralManager(delegate: self, queue: nil)
-	}
-	
-	static func DefaultHandler(_:CBPeripheral) -> BluetoothPeripheralHandler?
-	{
-		return nil
-	}
-	
-	
-	func updateDeviceState(_ peripheral:CBPeripheral)
-	{
-		/*
-		if !self.showNoNameDevices && peripheral.name == nil
-		{
-			return
-		}*/
-		
-		let name = peripheral.name ?? "\(peripheral.identifier)"
-		var services = peripheral.services ?? []
-		let device = BluetoothDevice(deviceUid: peripheral.identifier, name: name, state: peripheral.state, services: services)
-		
-		DispatchQueue.main.async
-		{
-			@MainActor in
-			self.deviceStates.update(with: device)
-		}
-	}
-	
-	func centralManager(_ central: CBCentralManager, 
-								didDiscover peripheral: CBPeripheral, 
-								advertisementData: [String : Any], 
-								rssi RSSI: NSNumber)
-	{
-		let name = peripheral.name ?? "\(peripheral.identifier)"
-		
-		//	see if we want to make a handler for this device
-		if connectingPeripherals[peripheral.identifier] == nil
-		{
-			if let newHandler = self.onPeripheralFoundCallback(peripheral)
-			{
-				//	we got a new handler back, which means parent wants to connect to this device
-				connectingPeripherals[peripheral.identifier] = newHandler
-				central.connect(peripheral)
-			}
-		}
-	
-		//print("Updating \(name) (\(peripheral.state))")
-		updateDeviceState(peripheral)
-	}
-	
-
-	func centralManager(_ central: CBCentralManager, didConnect peripheral: CBPeripheral) 
-	{
-		updateDeviceState(peripheral)
-
-		guard let handler = connectingPeripherals[peripheral.identifier] else
-		{
-			print("Connected to peripheral without handler; \(peripheral.name) (\(peripheral.state))")
-			return
-		}
-			
-		print("Connected to peripheral \(peripheral.name) (\(peripheral.state))")
-		handler.OnConnected()
-	}	
-	
-	func centralManagerDidUpdateState(_ central: CBCentralManager) 
-	{
-		lastState = central.state
-		isScanning = central.isScanning
-		
-		if central.state == .poweredOn
-		{
-			central.scanForPeripherals(withServices:nil)
-			//central.scanForPeripherals(withServices: [mxw10PrinterServiceUid])
-		}
-	}
-}
 
 func imageToPixels<PixelFormat>(_ image: NSImage,convertPixel:(_ r:UInt8,_ g:UInt8,_ b:UInt8,_ a:UInt8)->PixelFormat) -> [[PixelFormat]]
 {
@@ -1202,390 +882,3 @@ func imageToPixelsFourBit(_ image: NSImage) -> [[UInt8]]
 	return output
 }
 
-/*
-func pixelsToImage(pixels: [[Bool]]) -> NSImage? 
-{
-	let height = pixelBits.count
-	let width = pixelBits[0].count
-	
-	let rgbColorSpace = CGColorSpaceCreateDeviceRGB()
-	let bitmapInfo = CGBitmapInfo(rawValue: CGImageAlphaInfo.premultipliedFirst.rawValue)
-	let bitsPerComponent = 8
-	let bitsPerPixel = 32
-	
-	struct Pixel 
-	{
-		var a: UInt8
-		var r: UInt8
-		var g: UInt8
-		var b: UInt8
-		
-		static let white = Pixel(a:255,r:255,g:255,b:255)
-		static let black = Pixel(a:255,r:0,g:0,b:0)
-	}
-	
-	func RowBitsToPixels(bits:[Bool]) -> [Pixel]
-	{
-		return bits.map{ $0 ? Pixel.white : Pixel.black }
-	}
-	let pixels = pixelBits.flatMap{ RowBitsToPixels(bits:$0) }
-		
-	var data = pixels
-	guard let providerRef = CGDataProvider(data: NSData(bytes: &data,
-														length: data.count * MemoryLayout<Pixel>.size)
-	)
-	else { return nil }
-	
-	guard let cgim = CGImage(
-		width: width,
-		height: height,
-		bitsPerComponent: bitsPerComponent,
-		bitsPerPixel: bitsPerPixel,
-		bytesPerRow: width * MemoryLayout<Pixel>.size,
-		space: rgbColorSpace,
-		bitmapInfo: bitmapInfo,
-		provider: providerRef,
-		decode: nil,
-		shouldInterpolate: true,
-		intent: .defaultIntent
-	)
-	else { return nil }
-	
-	return NSImage(cgImage: cgim, size: CGSize(width: width, height: height))
-}
-*/
-
-struct Pixel32
-{
-	var a: UInt8
-	var r: UInt8
-	var g: UInt8
-	var b: UInt8
-	
-	static var bitsPerComponent : Int	{	8	}
-	static var bitsPerPixel : Int	{	32	}
-	static let white = Pixel32(a:255,r:255,g:255,b:255)
-	static let black = Pixel32(a:255,r:0,g:0,b:0)
-}
-
-func pixelsToImage(pixels:[[Bool]]) -> NSImage?
-{
-	func BitToPixel(bit:Bool) -> Pixel32
-	{
-		return bit ? Pixel32.white : Pixel32.black
-	}
-	return pixelsToImage( pixels:pixels, convert:BitToPixel )
-}
-
-
-func pixelsToImage(pixels:[[UInt8]]) -> NSImage?
-{
-	func NibbleToPixel(nibble:UInt8) -> Pixel32
-	{
-		let Max4 = Double(0x0f)
-		let nibblef = Double(nibble) / Max4
-		let byte = UInt8(nibblef * 255.0)
-		return Pixel32(a:255,r:byte,g:byte,b:byte)
-	}
-	return pixelsToImage( pixels:pixels, convert:NibbleToPixel )
-}
-
-func pixelsToImage<PixelFormat>(pixels:[[PixelFormat]],convert:(PixelFormat)->Pixel32) -> NSImage? 
-{
-	let height = pixels.count
-	let width = pixels[0].count
-	
-	let rgbColorSpace = CGColorSpaceCreateDeviceRGB()
-	let bitmapInfo = CGBitmapInfo(rawValue: CGImageAlphaInfo.premultipliedFirst.rawValue)
-	let bitsPerComponent = Pixel32.bitsPerComponent
-	let bitsPerPixel = Pixel32.bitsPerPixel
-	
-	
-	let pixels = pixels.flatMap{ $0.map{ convert($0) } }
-	
-	var data = pixels
-	guard let providerRef = CGDataProvider(data: NSData(bytes: &data,
-														length: data.count * MemoryLayout<Pixel32>.size)
-	)
-	else { return nil }
-	
-	guard let cgim = CGImage(
-		width: width,
-		height: height,
-		bitsPerComponent: bitsPerComponent,
-		bitsPerPixel: bitsPerPixel,
-		bytesPerRow: width * MemoryLayout<Pixel32>.size,
-		space: rgbColorSpace,
-		bitmapInfo: bitmapInfo,
-		provider: providerRef,
-		decode: nil,
-		shouldInterpolate: true,
-		intent: .defaultIntent
-	)
-	else { return nil }
-	
-	return NSImage(cgImage: cgim, size: CGSize(width: width, height: height))
-}
-
-//	because the peripheral is a class, it needs it's own view 
-//	with @StateObject in order to see changes
-struct PrinterView : View 
-{
-	@StateObject var printer : MXW01Peripheral
-
-	var sourceImage = NSImage(named:"HoltsHitAndRun")!
-	@State var error : Error? = nil
-	var printProgressPercent : Float? {	printProgress.map{ Float($0.0) / Float($0.1-1) } }
-	@State var printProgress : (Int,Int)? = nil	//	0..1
-
-	@State var brightnessThresholdFloat : Float = 0.5
-	var brightnessThreshold : UInt8	{	UInt8( brightnessThresholdFloat * 255.0 )	}
-	@State var oneBitPixels : [[Bool]]? = nil
-	@State var oneBitImage : NSImage? = nil
-	@State var fourBitPixels : [[UInt8]]? = nil
-	@State var fourBitImage : NSImage? = nil
-	
-	@State var printerDarknessFloat : Float = 0.5
-	var printerDarkness : UInt8	{	UInt8( printerDarknessFloat * 255.0 )	}
-	
-	@State var printRowDelayMsFloat : Float = Float(MXW01Peripheral.defaultPrintRowDelayMs)
-	var printRowDelayMs : Int	{	Int( printRowDelayMsFloat )	}
-	
-	func UpdateThresholdedImage()
-	{
-		oneBitPixels = imageToPixelsOneBit( sourceImage, brightnessThreshold: brightnessThreshold )
-		oneBitImage = pixelsToImage( pixels: oneBitPixels! )
-		fourBitPixels = imageToPixelsFourBit( sourceImage )
-		fourBitImage = pixelsToImage( pixels: fourBitPixels! )
-	}
-	
-	func OnPrintProgress(_ row:Int,_ rowCount:Int)
-	{
-		printProgress = (row,rowCount)
-	}
-	
-	func OnClickedPrintOneBit()
-	{
-		Task
-		{
-			error = nil
-			do
-			{
-				UpdateThresholdedImage()
-				OnPrintProgress(0,oneBitPixels!.count)
-				try await printer.PrintImage(imageRowBits: oneBitPixels!,darkness: printerDarkness, printRowDelayMs: self.printRowDelayMs, onSentRow: { row in OnPrintProgress(row,oneBitPixels!.count) } )
-			}
-			catch
-			{
-				self.error = error
-			}
-		}
-	}
-	
-	func OnClickedPrintFourBit()
-	{
-		error = nil
-		Task
-		{
-			do
-			{
-				UpdateThresholdedImage()
-				try await printer.PrintImage(imageRowNibbles: fourBitPixels!,darkness: printerDarkness, printRowDelayMs: self.printRowDelayMs, onSentRow: { row in OnPrintProgress(row,fourBitPixels!.count) } )
-			}
-			catch
-			{
-				self.error = error
-			}
-		}
-	}
-	
-	@ViewBuilder func StatusView() -> some View
-	{
-		VStack(alignment: .leading,spacing: 10)
-		{
-			let debugColour = printer.debugColour
-			let servicesDebug = printer.services.count > 0 ? "(\(printer.services.count) services)" : ""
-			let batteryDebug = printer.batteryLevelPercent.map{ "\($0)%" } ?? "?"
-			let statusDebug = printer.lastStatus.map{ "\($0)" } ?? "?"
-			let tempDebug = printer.tempratureCentigrade.map{ "\($0)oC" } ?? "?"
-			let tempIcon = printer.tempratureCentigrade != nil ? "thermometer.medium" : "thermometer.medium.slash"
-			
-			Label("\(printer.name) \(servicesDebug) \(printer.state)",systemImage: "printer.fill")
-				.background(debugColour)
-			Label("\(batteryDebug)",systemImage: printer.batteryLevelIconName )
-			Label(tempDebug,systemImage: tempIcon )
-			Label("Status: \(statusDebug)", systemImage: printer.printerStatusIconName )
-			if let error = printer.error
-			{
-				Label(error,systemImage: "exclamationmark.triangle.fill")
-			}
-			if let version = printer.printerVersion
-			{
-				Label("Version \(version)",systemImage: "info.square.fill")
-			}
-		}
-	}
-	
-	@ViewBuilder func ImageAndPrintView() -> some View
-	{
-		VStack(alignment: .leading,spacing: 10)
-		{
-			Slider(value: $brightnessThresholdFloat, in: 0...1)
-			{
-				Text("Brightness threshold \(brightnessThreshold)")
-			}
-			.onChange(of: self.brightnessThresholdFloat )
-			{
-				UpdateThresholdedImage()
-			}
-			.onAppear
-			{
-				UpdateThresholdedImage()
-			}
-			
-			Slider(value: $printerDarknessFloat, in: 0...1)
-			{
-				Text("Printer Darkness \(printerDarkness)")
-			}
-			
-			Slider(value: $printRowDelayMsFloat, in: 0...100)
-			{
-				Text("Printer Row Delay Milliseconds \(printRowDelayMs)")
-			}
-			
-			HStack
-			{
-				VStack
-				{
-					Image( nsImage: oneBitImage ?? sourceImage )
-						.resizable()
-						.scaledToFit()
-					
-					Button(action:OnClickedPrintOneBit)
-					{
-						Text("Print One Bit")
-					}
-				}
-				
-				VStack
-				{
-					Image( nsImage: fourBitImage ?? sourceImage )
-						.resizable()
-						.scaledToFit()
-					
-					Button(action:OnClickedPrintFourBit)
-					{
-						Text("Print Four Bit")
-					}
-				}
-			}
-			
-			HStack
-			{
-				ProgressView(value: self.printProgressPercent)
-				let progressDebug = printProgress.map{ "\($0+1)/\($1)" } ?? " "
-				Text("Progress \(progressDebug)")
-			}
-		}
-	}
-	
-	@ViewBuilder func ErrorView() -> some View
-	{
-		if let error 
-		{
-			Text(error.localizedDescription)
-				.padding(5)
-				.frame(maxWidth:.infinity)
-				.foregroundStyle(.white)
-				.background(.red)
-				.onTapGesture {
-					self.error = nil
-				}
-		}
-	}
-	
-	var body: some View
-	{
-		ErrorView()
-		HStack(alignment: .top)
-		{
-			StatusView()
-			ImageAndPrintView()
-		}
-		.padding(20)
-	}
-}
-
-struct CatPrinterManagerView : View 
-{
-	@StateObject var printers = CatPrinterManager()
-	
-	var body: some View 
-	{
-		let bluetoothManager = printers.bluetoothManager!
-		VStack
-		{
-			Text("Printers: \(printers.mxw01s.count)")
-			VStack
-			{
-				ForEach( printers.mxw01s )
-				{
-					(device:MXW01Peripheral) in
-					PrinterView(printer: device)
-				}
-			}
-			
-			Text("Devices: \(bluetoothManager.devices.count)")
-			Text("Manager State: \(bluetoothManager.lastState)")
-			Text("Is Scanning: \(bluetoothManager.isScanning)")
-			if printers.mxw01s.count == 0
-			{
-				List
-				{
-					ForEach( bluetoothManager.devices )
-					{
-						device in
-						let debugColour = device.debugColour
-						let servicesDebug = device.services.count > 0 ? "(\(device.services.count) services)" : ""
-						Text("Device Name: \(device.name) \(servicesDebug) \(device.state)")
-							.background(debugColour)
-						
-					}
-				}
-			}
-		}	
-	}
-}
-
-struct BluetoothManagerView : View 
-{
-	@StateObject var bluetoothManager = BluetoothManager()
-	
-	var body: some View 
-	{
-		VStack
-		{
-			Text("Bluetooth devices: \(bluetoothManager.devices.count)")
-			Text("Manager State: \(bluetoothManager.lastState)")
-			Text("Is Scanning: \(bluetoothManager.isScanning)")
-			List
-			{
-				ForEach( bluetoothManager.devices )
-				{
-					device in
-					let debugColour = device.debugColour
-					let servicesDebug = device.services.count > 0 ? "(\(device.services.count) services)" : ""
-					Text("Device Name: \(device.name) \(servicesDebug) \(device.state)")
-						.background(debugColour)
-					
-				}
-			}
-		}	
-	}
-}
-
-#Preview 
-{
-	BluetoothManagerView()
-		.frame(minWidth: 300,minHeight: 100)
-}
