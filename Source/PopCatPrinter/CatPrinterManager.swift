@@ -3,8 +3,6 @@ import CoreBluetooth
 import Combine
 
 
-
-
 extension CBCharacteristic
 {
 	var name : String
@@ -811,21 +809,35 @@ func imageToPixels<PixelFormat>(_ image: UIImage,convertPixel:(_ r:UInt8,_ g:UIn
 	}
 	let pixelData = imageCg.dataProvider!.data
 	
+	let width = imageCg.width
+	let height = imageCg.height
+	let pixelFormat = imageCg.pixelFormatInfo
+	let bitsPerPixel = imageCg.bitsPerPixel
+	let bytesPerPixel = bitsPerPixel / 8
+	let bytesPerPixel2 = imageCg.bytesPerRow / width
+	let bitsPerComponent = imageCg.bitsPerComponent
+	let rowStride = imageCg.bytesPerRow / bytesPerPixel	//	some images are padded!
+	let channels = bytesPerPixel
 	let data: UnsafePointer<UInt8> = CFDataGetBytePtr(pixelData)
 	
-	for y in 0..<Int(image.size.height) 
+	for y in 0..<height
 	{
 		var row = [PixelFormat]()
-		for x in 0..<Int(image.size.width) 
+		row.reserveCapacity(width)
+		
+		for x in 0..<width
 		{
-			let pos = CGPoint(x: x, y: y)
+			let pixelIndex = (rowStride * y ) + x
+			let byteIndex = pixelIndex * bytesPerPixel
+			let redIndex = 0
+			let greenIndex = min( 1, channels-1 )
+			let blueIndex = min( 2, channels-1 )
+			let alphaIndex = min( 3, channels-1 )
 			
-			let pixelInfo: Int = ((Int(image.size.width) * Int(pos.y) * 4) + Int(pos.x) * 4)
-			
-			let r = data[pixelInfo]
-			let g = data[pixelInfo + 1]
-			let b = data[pixelInfo + 2]
-			let a = data[pixelInfo + 3]
+			let r = data[byteIndex+redIndex]
+			let g = data[byteIndex+greenIndex]
+			let b = data[byteIndex+blueIndex]
+			let a = data[byteIndex+alphaIndex]
 			
 			let pixel = convertPixel(r,g,b,a)
 			row.append(pixel)
