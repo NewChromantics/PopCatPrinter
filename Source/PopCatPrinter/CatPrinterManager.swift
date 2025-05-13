@@ -845,7 +845,7 @@ public class MXW01Peripheral : NSObject, BluetoothPeripheralHandler, CBPeriphera
 	
 
 
-func imageToPixels<PixelFormat>(_ image: UIImage,convertPixel:(_ r:UInt8,_ g:UInt8,_ b:UInt8,_ a:UInt8)->PixelFormat) throws -> [[PixelFormat]]
+func imageToPixels<PixelFormat>(_ image: UIImage,rotate90:Bool,convertPixel:(_ r:UInt8,_ g:UInt8,_ b:UInt8,_ a:UInt8)->PixelFormat) throws -> [[PixelFormat]]
 {
 	var rows = [[PixelFormat]]()
 
@@ -866,14 +866,20 @@ func imageToPixels<PixelFormat>(_ image: UIImage,convertPixel:(_ r:UInt8,_ g:UIn
 	let channels = bytesPerPixel
 	let data: UnsafePointer<UInt8> = CFDataGetBytePtr(pixelData)
 	
-	for y in 0..<height
+	let outputHeight = rotate90 ? width : height
+	let outputWidth = rotate90 ? height : width 
+	
+	for y in 0..<outputHeight
 	{
 		var row = [PixelFormat]()
-		row.reserveCapacity(width)
+		row.reserveCapacity(outputWidth)
 		
-		for x in 0..<width
+		for x in 0..<outputWidth
 		{
-			let pixelIndex = (rowStride * y ) + x
+			let inputx = rotate90 ? y : x
+			let inputy = rotate90 ? x : y
+			
+			let pixelIndex = (rowStride * inputy ) + inputx
 			let byteIndex = pixelIndex * bytesPerPixel
 			let redIndex = 0
 			let greenIndex = min( 1, channels-1 )
@@ -894,9 +900,9 @@ func imageToPixels<PixelFormat>(_ image: UIImage,convertPixel:(_ r:UInt8,_ g:UIn
 }
 
 // Get pixels from an UIImage
-public func imageToPixelsOneBit(_ image: UIImage,brightnessThreshold:UInt8) throws -> [[Bool]]
+public func imageToPixelsOneBit(_ image: UIImage,brightnessThreshold:UInt8,rotate90:Bool=false) throws -> [[Bool]]
 {
-	let output = try imageToPixels(image)
+	let output = try imageToPixels(image,rotate90:rotate90)
 	{
 		r,g,b,a in
 		let pixel = r > brightnessThreshold
@@ -905,9 +911,9 @@ public func imageToPixelsOneBit(_ image: UIImage,brightnessThreshold:UInt8) thro
 	return output
 }
 
-public func imageToPixelsFourBit(_ image: UIImage) throws -> [[UInt8]]
+public func imageToPixelsFourBit(_ image: UIImage,rotate90:Bool=false) throws -> [[UInt8]]
 {
-	let output = try imageToPixels(image)
+	let output = try imageToPixels(image,rotate90:rotate90)
 	{
 		r,g,b,a in
 		//let brightness = (Double(r)+Double(g)+Double(b)) / (255.0*3.0)

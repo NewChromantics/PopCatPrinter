@@ -92,9 +92,9 @@ public struct PrinterView<PrinterType> : View where PrinterType:Printer
 	func UpdateThresholdedImage() throws
 	{
 		oneBitPixels = try imageToPixelsOneBit( sourceImage, brightnessThreshold: brightnessThreshold )
-		oneBitImage = pixelsToImage( pixels: oneBitPixels! )
+		oneBitImage = try pixelsToImage( pixels: oneBitPixels!, rotateRight: false )
 		fourBitPixels = try imageToPixelsFourBit( sourceImage )
-		fourBitImage = pixelsToImage( pixels: fourBitPixels! )
+		fourBitImage = try pixelsToImage( pixels: fourBitPixels!, rotateRight: false )
 	}
 	
 	func OnPrintProgress(percent:Int)
