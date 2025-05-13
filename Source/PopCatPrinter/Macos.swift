@@ -21,7 +21,7 @@ extension UIImage
 //	use same Image(uiImage:) constructor on macos & ios
 extension Image
 {
-	public init(uiImage:UIImage)
+	init(uiImage:UIImage)
 	{
 		self.init(nsImage:uiImage)
 	}
