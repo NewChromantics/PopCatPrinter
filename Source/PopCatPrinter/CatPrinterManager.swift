@@ -128,7 +128,18 @@ public class MXW01Peripheral : NSObject, BluetoothPeripheralHandler, CBPeriphera
 	public var name : String	{	peripheral.name ?? "\(peripheral.identifier)"	}
 	var state : CBPeripheralState	{	peripheral.state	}
 	
+	//	need this to be a hard variable
 	@Published public var status: PrinterStatus?
+	var calculatedstatus: PrinterStatus?
+	{
+		if hardwareStatus == .Idle && isPrinting
+		{
+			return .Printing
+		}
+		return hardwareStatus
+	}
+	private var hardwareStatus: PrinterStatus?
+	var isPrinting = false	//	essentially a lock
 	
 	@Published public var version: String?
 	@Published public var error : Error? = nil
@@ -441,7 +452,8 @@ public class MXW01Peripheral : NSObject, BluetoothPeripheralHandler, CBPeriphera
 		DispatchQueue.main.async
 		{
 			@MainActor in
-			self.status = printerStatus
+			self.hardwareStatus = printerStatus
+			self.status = self.calculatedstatus
 			self.tempratureCentigrade = Int(temprature)
 			self.batteryLevelPercent = Int(batteryLevel)
 		}
@@ -593,7 +605,17 @@ public class MXW01Peripheral : NSObject, BluetoothPeripheralHandler, CBPeriphera
 	
 	public func PrintOneBitImage(pixels:[[Bool]],darkness:Double,printRowDelayMs:Int,onProgress:(Int)->Void) async throws
 	{
+		if status == .Printing
+		{
+			throw PrintError("Already printing")
+		}
 		try await WaitForIdleStatus()
+		
+		isPrinting = true
+		defer
+		{
+			isPrinting = false
+		}
 		
 		SetPrinterDarkness(darkness)
 		
@@ -619,7 +641,17 @@ public class MXW01Peripheral : NSObject, BluetoothPeripheralHandler, CBPeriphera
 	
 	public func PrintFourBitImage(pixels:[[UInt8]],darkness:Double,printRowDelayMs:Int,onProgress:(Int)->Void) async throws
 	{
+		if status == .Printing
+		{
+			throw PrintError("Already printing")
+		}
 		try await WaitForIdleStatus()
+		
+		isPrinting = true
+		defer
+		{
+			isPrinting = false
+		}
 		
 		SetPrinterDarkness(darkness)
 		

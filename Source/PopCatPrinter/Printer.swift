@@ -2,7 +2,7 @@ import SwiftUI
 
 public enum PrinterStatus
 {
-	case Disconnected,Idle,PaperMissing,NotOkay
+	case Disconnected,Idle,PaperMissing,NotOkay,Printing
 }
 
 public protocol Printer : ObservableObject, Identifiable
@@ -61,6 +61,7 @@ public extension Printer
 			case .PaperMissing:	return "newspaper"
 			case .NotOkay:	return "exclamationmark.triangle.fill"
 			case .Idle:	return "checkmark.seal"
+			case .Printing: return "printer.filled.and.paper"
 		}
 	}
 }
