@@ -773,35 +773,10 @@ public class MXW01Peripheral : NSObject, BluetoothPeripheralHandler, CBPeriphera
 			
 			await Task.sleep(milliseconds: printRowDelayMs)
 		}
-		/*
-			//	send data
-			for rowIndex in 0..<linePackedBytes.count
-			{
-				let packedLineBytes = linePackedBytes[rowIndex]
-				//	verify data
-				//	1bit data = 8 pixels per byte
-				//	4bit = 2 pixels per byte
-				//	row is 384 pixels wide
-				let rowByteCount = imageWidth / pixelFormat.pixelsPerByte
-				
-				//let rowData = [UInt8](repeating: line, count: rowByteCount)
-				let rowData = packedLineBytes
-				if rowData.count != rowByteCount
-				{
-					throw PrintError("Row expected to have \(rowByteCount) bytes, but provided \(rowData.count)")
-				}
-				
-				//	sniffing bluetooth sent 182 byte chunks
-				//	this works! but printed white
-				let shortData = Data(rowData).subdata(in: 0..<182)
-				print("Sending \(shortData.map{Int($0)})")
-				peripheral.writeValue( shortData, for: self.data!, type: .withoutResponse)
-				
-				onSentRow(rowIndex)
-				
-				await Task.sleep(milliseconds: printRowDelayMs)
-			}
-		*/
+		
+		//	just to clean up progress
+		//	gr: should be 99?
+		onProgress(100)
 
 		//	send flush when finished
 		let flushResponse = try await SendPacketAndWaitForResponse( Command.FlushPrint, payload:[0x0], expectedResponseCommand:Command.PrintFinished )
