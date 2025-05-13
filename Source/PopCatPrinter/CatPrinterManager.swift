@@ -593,7 +593,7 @@ public class MXW01Peripheral : NSObject, BluetoothPeripheralHandler, CBPeriphera
 		try await PrintOneBitImage(pixels: patternBools,darkness:1.0,printRowDelayMs:MXW01Peripheral.defaultPrintRowDelayMs, onProgress: {_ in})
 	}
 	
-	public func PrintOneBitImage(pixels:[[Bool]],darkness:Float,printRowDelayMs:Int,onProgress:(Int)->Void) async throws
+	public func PrintOneBitImage(pixels:[[Bool]],darkness:Double,printRowDelayMs:Int,onProgress:(Int)->Void) async throws
 	{
 		try await WaitForIdleStatus()
 		
@@ -619,7 +619,7 @@ public class MXW01Peripheral : NSObject, BluetoothPeripheralHandler, CBPeriphera
 		try await PrintPackedRows( linePackedBytes, pixelFormat: .OneBit, printRowDelayMs: printRowDelayMs, onProgress: onProgress )
 	}
 	
-	public func PrintFourBitImage(pixels:[[UInt8]],darkness:Float,printRowDelayMs:Int,onProgress:(Int)->Void) async throws
+	public func PrintFourBitImage(pixels:[[UInt8]],darkness:Double,printRowDelayMs:Int,onProgress:(Int)->Void) async throws
 	{
 		try await WaitForIdleStatus()
 		
@@ -702,7 +702,7 @@ public class MXW01Peripheral : NSObject, BluetoothPeripheralHandler, CBPeriphera
 		return status
 	}
 	
-	func SetPrinterDarkness(_ darknessLevel:Float) 
+	func SetPrinterDarkness(_ darknessLevel:Double) 
 	{
 		let darkness8 = UInt8( darknessLevel * 255.0 )
 		let setDarknessPacket = MakePacket( Command.SetDarkness,payload: [darkness8])

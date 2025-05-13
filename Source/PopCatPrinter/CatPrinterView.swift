@@ -64,7 +64,7 @@ public struct PrinterView<PrinterType> : View where PrinterType:Printer
 	@State var fourBitPixels : [[UInt8]]? = nil
 	@State var fourBitImage : UIImage? = nil
 	
-	@State var printerDarknessFloat : Float = 0.5
+	@State var printerDarknessFloat : Double = 0.5
 	var printerDarknessPercent : Int { Int(printerDarknessFloat*100.0) }
 	
 	@State var printRowDelayMsFloat : Float = Float(MXW01Peripheral.defaultPrintRowDelayMs)

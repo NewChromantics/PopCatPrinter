@@ -15,8 +15,8 @@ public protocol Printer : ObservableObject, Identifiable
 	var tempratureCentigrade : Int? {get}
 	var version : String? {get}
 	
-	func PrintOneBitImage(pixels:[[Bool]],darkness:Float,printRowDelayMs:Int,onProgress:(Int)->Void) async throws
-	func PrintFourBitImage(pixels:[[UInt8]],darkness:Float,printRowDelayMs:Int,onProgress:(Int)->Void) async throws
+	func PrintOneBitImage(pixels:[[Bool]],darkness:Double,printRowDelayMs:Int,onProgress:(Int)->Void) async throws
+	func PrintFourBitImage(pixels:[[UInt8]],darkness:Double,printRowDelayMs:Int,onProgress:(Int)->Void) async throws
 }
 
 
@@ -96,12 +96,12 @@ public class FakePrinter : Printer
 		self.error = PrintError("Fake print init error")
 	}
 	
-	public func PrintOneBitImage(pixels: [[Bool]],darkness:Float,printRowDelayMs:Int,onProgress:(Int)->Void) async throws
+	public func PrintOneBitImage(pixels: [[Bool]],darkness:Double,printRowDelayMs:Int,onProgress:(Int)->Void) async throws
 	{
 		throw PrintError("Test printer doesnt support PrintOneBitImage") 
 	}
 	
-	public func PrintFourBitImage(pixels: [[UInt8]],darkness:Float,printRowDelayMs:Int,onProgress:(Int)->Void) async throws
+	public func PrintFourBitImage(pixels: [[UInt8]],darkness:Double,printRowDelayMs:Int,onProgress:(Int)->Void) async throws
 	{
 		throw PrintError("Test printer doesnt support PrintFourBitImage") 
 	}
