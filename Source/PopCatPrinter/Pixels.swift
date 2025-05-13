@@ -144,48 +144,38 @@ extension CGImage
 	
 	public func pixelsRotated(radians: Float) -> CGImage?
 	{
-		//	draw to a big context
-		//	rotate
-		//	draw to a final clipped context
-		let bigDimension = max(width,height)
-		guard let bigContext = CGContext.ARGBBitmapContext(width: bigDimension, height: bigDimension, withAlpha: true) else
+		guard let selfContext = CGContext.ARGBBitmapContext(width: self.width, height: self.height, withAlpha: true) else
 		{
 			return nil
 		}
-		bigContext.setFillColor(CGColor.init(red: 1.0, green: 0.0, blue: 0.0, alpha: 1.0))
-		bigContext.fill([CGRect(x:0,y:0,width:bigDimension,height:bigDimension)])
-		bigContext.draw(self, in: CGRect(x:0, y:0, width:self.width, height:self.height))
-		guard let bigContextData = bigContext.data else
+		selfContext.setFillColor(CGColor.init(red: 1.0, green: 0.0, blue: 0.0, alpha: 1.0))
+		selfContext.fill([CGRect(x:0,y:0,width:selfContext.width,height:selfContext.height)])
+		selfContext.draw(self, in: CGRect(x:0, y:0, width:self.width, height:self.height))
+		guard let selfContextData = selfContext.data else
 		{
 			return nil
 		}
 		
+		guard let rotContext = CGContext.ARGBBitmapContext(width: self.height, height: self.width, withAlpha: true) else
+		{
+			return nil
+		}
+		rotContext.setFillColor(CGColor.init(red: 0.0, green: 1.0, blue: 0.0, alpha: 1.0))
+		rotContext.fill([CGRect(x:0,y:0,width:rotContext.width,height:rotContext.height)])
+		guard let rotContextData = rotContext.data else
+		{
+			return nil
+		}
 		
-		var src = vImage_Buffer(data: bigContextData, height: vImagePixelCount(bigContext.height), width: vImagePixelCount(bigContext.width), rowBytes: bigContext.bytesPerRow)
-		var dst = vImage_Buffer(data: bigContextData, height: vImagePixelCount(bigContext.height), width: vImagePixelCount(bigContext.width), rowBytes: bigContext.bytesPerRow)
-		let bgColor: [UInt8] = [0, 255, 0, 255]
+		var src = vImage_Buffer(data: selfContextData, height: vImagePixelCount(selfContext.height), width: vImagePixelCount(selfContext.width), rowBytes: selfContext.bytesPerRow)
+		var dst = vImage_Buffer(data: rotContextData, height: vImagePixelCount(rotContext.height), width: vImagePixelCount(rotContext.width), rowBytes: rotContext.bytesPerRow)
+		let bgColor: [UInt8] = [0, 0, 255, 255]
 		vImageRotate_ARGB8888(&src, &dst, nil, radians, bgColor, vImage_Flags(kvImageBackgroundColorFill))
 		
-		guard let bigImage = bigContext.makeImage() else
+		guard let rotImage = rotContext.makeImage() else
 		{
 			return nil
 		}
-		
-		//	draw rotated data to a clipped image
-		let outputWidth = self.height
-		let outputHeight = self.width
-		guard let clippedContext = CGContext.ARGBBitmapContext(width: outputWidth, height: outputHeight, withAlpha: true) else
-		{
-			return nil
-		}
-		clippedContext.setFillColor(CGColor.init(red: 0.0, green: 0.0, blue: 1.0, alpha: 1.0))
-		clippedContext.fill([CGRect(x:0,y:0,width:clippedContext.width,height:clippedContext.height)])
-		clippedContext.draw(bigImage, in: CGRect(x:0, y:0, width:bigImage.width, height:bigImage.height))
-		let clippedContextWidth = clippedContext.width
-		let clippedContextHeight = clippedContext.height
-		let clippedImage = clippedContext.makeImage()
-		let clippedWidth = clippedImage!.width
-		let clippedHeight = clippedImage!.height
-		return clippedImage
+		return rotImage
 	}
 }
