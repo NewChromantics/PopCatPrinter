@@ -449,16 +449,26 @@ public class MXW01Peripheral : NSObject, BluetoothPeripheralHandler, CBPeriphera
 			}
 		}()
 		
+		self.hardwareStatus = printerStatus
+		OnStatusChanged()
+		
 		DispatchQueue.main.async
 		{
 			@MainActor in
-			self.hardwareStatus = printerStatus
-			self.status = self.calculatedstatus
 			self.tempratureCentigrade = Int(temprature)
 			self.batteryLevelPercent = Int(batteryLevel)
 		}
 		
 		return printerStatus
+	}
+	
+	func OnStatusChanged()
+	{
+		DispatchQueue.main.async
+		{
+			@MainActor in
+			self.status = self.calculatedstatus
+		}
 	}
 	
 	func OnBatteryLevel(_ payload:Data) throws
@@ -612,9 +622,11 @@ public class MXW01Peripheral : NSObject, BluetoothPeripheralHandler, CBPeriphera
 		try await WaitForIdleStatus()
 		
 		isPrinting = true
+		OnStateChanged()
 		defer
 		{
 			isPrinting = false
+			OnStateChanged()
 		}
 		
 		SetPrinterDarkness(darkness)
@@ -648,9 +660,11 @@ public class MXW01Peripheral : NSObject, BluetoothPeripheralHandler, CBPeriphera
 		try await WaitForIdleStatus()
 		
 		isPrinting = true
+		OnStateChanged()
 		defer
 		{
 			isPrinting = false
+			OnStateChanged()
 		}
 		
 		SetPrinterDarkness(darkness)
