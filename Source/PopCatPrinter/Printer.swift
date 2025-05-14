@@ -1,5 +1,28 @@
 import SwiftUI
 
+
+public enum PrintPixelFormat : UInt8 
+{
+	//	These are the values for the MXW01
+	//	move this to explicilty be in the MXW01 code
+	case OneBit = 0x0
+	case FourBit = 0x2
+	
+	var bitsPerPixel : Int
+	{
+		switch self
+		{
+			case .OneBit:	return 1
+			case .FourBit:	return 4
+		}
+	}
+	var pixelsPerByte : Int
+	{
+		return 8 / bitsPerPixel
+	}
+}
+
+
 public enum PrinterStatus
 {
 	case Disconnected,Idle,PaperMissing,NotOkay,Printing
@@ -15,8 +38,10 @@ public protocol Printer : ObservableObject, Identifiable
 	var tempratureCentigrade : Int? {get}
 	var version : String? {get}
 	
-	func PrintOneBitImage(pixels:[[Bool]],darkness:Double,printRowDelayMs:Int,onProgress:(Int)->Void) async throws
-	func PrintFourBitImage(pixels:[[UInt8]],darkness:Double,printRowDelayMs:Int,onProgress:(Int)->Void) async throws
+	//	when sending pixels, send a full 8bit component
+	//	- printing one-bit will threshold white/black at 128
+	//	- printing four bit will half the value provided 
+	func PrintImage(pixels:[[UInt8]],printFormat:PrintPixelFormat,darkness:Double,printRowDelayMs:Int,onProgress:(Int)->Void) async throws
 }
 
 
@@ -97,15 +122,9 @@ public class FakePrinter : Printer
 		self.error = PrintError("Fake print init error")
 	}
 	
-	public func PrintOneBitImage(pixels: [[Bool]],darkness:Double,printRowDelayMs:Int,onProgress:(Int)->Void) async throws
+	public func PrintImage(pixels: [[UInt8]],printFormat:PrintPixelFormat,darkness:Double,printRowDelayMs:Int,onProgress:(Int)->Void) async throws
 	{
-		throw PrintError("Test printer doesnt support PrintOneBitImage") 
+		throw PrintError("Test printer doesnt support PrintImage") 
 	}
-	
-	public func PrintFourBitImage(pixels: [[UInt8]],darkness:Double,printRowDelayMs:Int,onProgress:(Int)->Void) async throws
-	{
-		throw PrintError("Test printer doesnt support PrintFourBitImage") 
-	}
-	
 
 }

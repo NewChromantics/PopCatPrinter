@@ -19,26 +19,47 @@ struct Pixel32
 	static let black = Pixel32(a:255,r:0,g:0,b:0)
 }
 
-public func pixelsToImage(pixels:[[Bool]],rotateRight:Bool) throws -> UIImage
-{
-	func BitToPixel(bit:Bool) -> Pixel32
-	{
-		return bit ? Pixel32.white : Pixel32.black
-	}
-	return try pixelsToImage( pixels:pixels, rotateRight: rotateRight, convert:BitToPixel )
-}
 
-
-public func pixelsToImage(pixels:[[UInt8]],rotateRight:Bool) throws -> UIImage
+public func pixelsToImage(pixels:[[UInt8]],printerFormat:PrintPixelFormat,rotateRight:Bool) throws -> UIImage
 {
-	func NibbleToPixel(nibble:UInt8) -> Pixel32
+	func GetThresholdedOneBitPixel(luma:UInt8) -> Pixel32
 	{
-		let Max4 = Double(0x0f)
-		let nibblef = Double(nibble) / Max4
-		let byte = UInt8(nibblef * 255.0)
-		return Pixel32(a:255,r:byte,g:byte,b:byte)
+		//	todo: use MX01 funcs
+		let component = UInt8( luma > 128 ? 0xff : 0x0 )
+		return Pixel32(a:255,r:component,g:component,b:component)
 	}
-	return try pixelsToImage( pixels:pixels, rotateRight:rotateRight, convert:NibbleToPixel )
+	
+	func GetThresholdedFourBitPixel(luma:UInt8) -> Pixel32
+	{
+		let luma4 = MXW01Peripheral.PixelToFourBit(luma)
+		let luma4inverted = MXW01Peripheral.PixelToFourBit(luma)
+
+		//	back to 8bit
+		var component = luma4 << 4
+		//var component = luma4inverted << 4
+		
+		/*
+		let componentAnd = luma & 0xfe
+		
+		if component != componentAnd
+		{
+			return Pixel32(a:255,r:255,g:0,b:0)
+		}
+		
+		if component == 0
+		{
+			return Pixel32(a:255,r:0,g:0,b:255)
+		}
+		if component == 254
+		{
+			return Pixel32(a:255,r:0,g:255,b:0)
+		}
+		 */
+		return Pixel32(a:255,r:component,g:component,b:component)
+	}
+	
+	let convertFunctor = printerFormat == .OneBit ? GetThresholdedOneBitPixel : GetThresholdedFourBitPixel
+	return try pixelsToImage( pixels:pixels, rotateRight:rotateRight, convert:convertFunctor )
 }
 
 func pixelsToImage<PixelFormat>(pixels:[[PixelFormat]],rotateRight:Bool,convert:(PixelFormat)->Pixel32) throws -> UIImage 
@@ -83,9 +104,10 @@ func pixelsToImage<PixelFormat>(pixels:[[PixelFormat]],rotateRight:Bool,convert:
 	
 	var output = cgim
 	
-	if rotateRight
+	//if rotateRight
+	if true
 	{
-		guard let rotated = cgim.pixelsRotated(degrees: -90 ) else
+		guard let rotated = cgim.pixelsRotated(degrees: rotateRight ? -90 : 0, rotateCanvas: rotateRight ) else
 		{
 			throw PrintError("failed to rotate cg image")
 		}
@@ -137,12 +159,12 @@ public extension CGContext
 
 extension CGImage
 {
-	public func pixelsRotated(degrees: Float) -> CGImage?
+	public func pixelsRotated(degrees: Float,rotateCanvas:Bool) -> CGImage?
 	{
-		return self.pixelsRotated(radians: degreesToRadians(degrees))
+		return self.pixelsRotated(radians: degreesToRadians(degrees), rotateCanvas:rotateCanvas )
 	}
 	
-	public func pixelsRotated(radians: Float) -> CGImage?
+	public func pixelsRotated(radians: Float,rotateCanvas:Bool) -> CGImage?
 	{
 		guard let selfContext = CGContext.ARGBBitmapContext(width: self.width, height: self.height, withAlpha: true) else
 		{
@@ -156,7 +178,10 @@ extension CGImage
 			return nil
 		}
 		
-		guard let rotContext = CGContext.ARGBBitmapContext(width: self.height, height: self.width, withAlpha: true) else
+		let rotWidth = rotateCanvas ? self.height : self.width 
+		let rotHeight = rotateCanvas ? self.width : self.height 
+		
+		guard let rotContext = CGContext.ARGBBitmapContext(width: rotWidth, height: rotHeight, withAlpha: true) else
 		{
 			return nil
 		}
@@ -170,7 +195,12 @@ extension CGImage
 		var src = vImage_Buffer(data: selfContextData, height: vImagePixelCount(selfContext.height), width: vImagePixelCount(selfContext.width), rowBytes: selfContext.bytesPerRow)
 		var dst = vImage_Buffer(data: rotContextData, height: vImagePixelCount(rotContext.height), width: vImagePixelCount(rotContext.width), rowBytes: rotContext.bytesPerRow)
 		let bgColor: [UInt8] = [0, 0, 255, 255]
-		vImageRotate_ARGB8888(&src, &dst, nil, radians, bgColor, vImage_Flags(kvImageBackgroundColorFill))
+		//let flags = vImage_Flags(kvImageBackgroundColorFill)
+		let flags = vImage_Flags(kvImageNoFlags)
+
+		//	its not documented, but rotating image... mirrors it... 
+		let rotateError = vImageRotate_ARGB8888(&src, &dst, nil, radians, bgColor, flags)
+		let mirrorError = vImageHorizontalReflect_ARGB8888( &dst, &dst, flags)
 		
 		guard let rotImage = rotContext.makeImage() else
 		{

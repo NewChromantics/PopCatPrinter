@@ -59,9 +59,8 @@ public struct PrinterView<PrinterType> : View where PrinterType:Printer
 	
 	@State var brightnessThresholdFloat : Float = 0.5
 	var brightnessThreshold : UInt8	{	UInt8( brightnessThresholdFloat * 255.0 )	}
-	@State var oneBitPixels : [[Bool]]? = nil
+	@State var printPixels : [[UInt8]]? = nil
 	@State var oneBitImage : UIImage? = nil
-	@State var fourBitPixels : [[UInt8]]? = nil
 	@State var fourBitImage : UIImage? = nil
 	
 	@State var printerDarknessFloat : Double = 0.5
@@ -91,10 +90,9 @@ public struct PrinterView<PrinterType> : View where PrinterType:Printer
 	
 	func UpdateThresholdedImage() throws
 	{
-		oneBitPixels = try imageToPixelsOneBit( sourceImage, brightnessThreshold: brightnessThreshold )
-		oneBitImage = try pixelsToImage( pixels: oneBitPixels!, rotateRight: false )
-		fourBitPixels = try imageToPixelsFourBit( sourceImage )
-		fourBitImage = try pixelsToImage( pixels: fourBitPixels!, rotateRight: false )
+		printPixels = try imageToPixelsLuma( sourceImage )
+		oneBitImage = try pixelsToImage(pixels: printPixels!, printerFormat: .OneBit, rotateRight: false )
+		fourBitImage = try pixelsToImage(pixels: printPixels!, printerFormat: .FourBit, rotateRight: false )
 	}
 	
 	func OnPrintProgress(percent:Int)
@@ -111,7 +109,7 @@ public struct PrinterView<PrinterType> : View where PrinterType:Printer
 			{
 				try UpdateThresholdedImage()
 				OnPrintProgress(percent: 0)
-				try await printer.PrintOneBitImage(pixels: oneBitPixels!,darkness: self.printerDarknessFloat,printRowDelayMs: self.printRowDelayMs, onProgress: {self.OnPrintProgress(percent:$0)} )
+				try await printer.PrintImage(pixels: printPixels!, printFormat: .OneBit,darkness: self.printerDarknessFloat,printRowDelayMs: self.printRowDelayMs, onProgress: {self.OnPrintProgress(percent:$0)} )
 			}
 			catch
 			{
@@ -128,7 +126,7 @@ public struct PrinterView<PrinterType> : View where PrinterType:Printer
 			do
 			{
 				try UpdateThresholdedImage()
-				try await printer.PrintFourBitImage(pixels: fourBitPixels!,darkness: self.printerDarknessFloat,printRowDelayMs: self.printRowDelayMs, onProgress: {self.OnPrintProgress(percent:$0)} )
+				try await printer.PrintImage(pixels: printPixels!, printFormat: .FourBit,darkness: self.printerDarknessFloat,printRowDelayMs: self.printRowDelayMs, onProgress: {self.OnPrintProgress(percent:$0)} )
 			}
 			catch
 			{
@@ -281,8 +279,6 @@ public struct CatPrinterManagerView : View
 
 #Preview
 {
-	//CatPrinterManagerView()
-	var fakePrinter = FakePrinter()
-	//PrinterView(printer: fakePrinter, sourceImage: UIImage(named:"HoltsHitAndRun")! )
+	let fakePrinter = FakePrinter()
 	PrinterStatusView(printer: fakePrinter)
 }
