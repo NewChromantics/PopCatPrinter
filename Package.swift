@@ -12,7 +12,7 @@ let package = Package(
 	platforms: [
 		.iOS(.v17),
 		.macOS(.v14),
-		.tvOS(.v16)
+		.tvOS(.v17)	//	17 for UnitCurve
 	],
 	
 
