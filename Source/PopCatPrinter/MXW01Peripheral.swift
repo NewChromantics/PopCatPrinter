@@ -551,7 +551,7 @@ public class MXW01Peripheral : NSObject, BluetoothPeripheralHandler, CBPeriphera
 	static func PixelToOneBitInverted(_ luma:UInt8) -> UInt8
 	{
 		let white = luma > 128
-		return white ? 0x1 : 0x0
+		return white ? 0x0 : 0x1
 	}
 
 	static func PixelToFourBitInverted(_ luma:UInt8) -> UInt8
