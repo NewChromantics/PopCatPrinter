@@ -1,5 +1,5 @@
 import CoreBluetooth
-
+import CoreGraphics
 
 private func checksum(_ data: [UInt8], startIndex: Int, amount: Int) -> UInt8 {
 	var b2: UInt8 = 0
@@ -564,6 +564,36 @@ public class MXW01Peripheral : NSObject, BluetoothPeripheralHandler, CBPeriphera
 	static func PixelToFourBit(_ luma:UInt8) -> UInt8
 	{
 		return luma >> 4
+	}
+	
+	public func PrintImage(pixels:CGImage,printFormat:PrintPixelFormat,darkness:Double,printRowDelayMs:Int,onProgress:(Int)->Void) async throws
+	{
+		let bitsPerPixel = pixels.bitsPerPixel
+		if bitsPerPixel != 8
+		{
+			throw PrintError("Expecting 1-byte pixel data")
+		}
+		
+		let rowStride = pixels.bytesPerRow
+		guard let pixelData = pixels.dataProvider?.data else
+		{
+			throw PrintError("Cannot read pixel data of CGImage")
+		}
+		let pixelDataPointer : UnsafePointer<UInt8> = CFDataGetBytePtr(pixelData)
+		let pixelDataData = Data(bytes: pixelDataPointer, count: rowStride * pixels.height)
+		
+
+		var rows = [[UInt8]]()
+		rows.reserveCapacity(pixels.height)
+		for y in 0..<pixels.height
+		{
+			let lumaIndex = 0 + (y*rowStride)
+			//	gr: could clip here to max printable width
+			let rowRange = lumaIndex..<lumaIndex+pixels.width
+			var row = [UInt8]( pixelDataData.subdata(in:rowRange) )
+			rows.append(row)
+		}
+		try await PrintImage(pixels:rows,printFormat: printFormat, darkness: darkness, printRowDelayMs: printRowDelayMs, onProgress: onProgress)
 	}
 	
 	public func PrintImage(pixels:[[UInt8]],printFormat:PrintPixelFormat,darkness:Double,printRowDelayMs:Int,onProgress:(Int)->Void) async throws
