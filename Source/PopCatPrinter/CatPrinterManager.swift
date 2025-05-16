@@ -71,10 +71,9 @@ struct Response
 
 
 
-func imageToPixels<PixelFormat>(_ image: UIImage,rotate90:Bool,convertPixel:(_ r:UInt8,_ g:UInt8,_ b:UInt8,_ a:UInt8)->PixelFormat) throws -> [[PixelFormat]]
-{
-	var rows = [[PixelFormat]]()
 
+func imageToPixels(_ image: UIImage,rotate90:Bool,convertPixel:(_ r:UInt8,_ g:UInt8,_ b:UInt8,_ a:UInt8)->UInt8) throws -> [[UInt8]]
+{
 	guard let imageCg = image.cgImage else
 	{
 		throw PrintError("Failed to get cg image from image")
@@ -95,9 +94,22 @@ func imageToPixels<PixelFormat>(_ image: UIImage,rotate90:Bool,convertPixel:(_ r
 	let outputHeight = rotate90 ? width : height
 	let outputWidth = rotate90 ? height : width 
 	
+	var rows = [[UInt8]]()
+	rows.reserveCapacity(outputHeight)
+	
+
+	func getCorrectedLuma(luma:Double) -> UInt8
+	{
+		var curvedValue = UnitCurve.linear.value(at: luma)
+		curvedValue = min( 1.0, max( 0.0, curvedValue ) )
+		//	as we're clamping the float to 1.0 - we have to be careful not to exceed 255
+		let curvedLuma = UInt8( curvedValue * Double(0xff) )
+		return curvedLuma
+	}
+	
 	for y in 0..<outputHeight
 	{
-		var row = [PixelFormat]()
+		var row = [UInt8]()
 		row.reserveCapacity(outputWidth)
 		
 		for x in 0..<outputWidth
@@ -117,7 +129,10 @@ func imageToPixels<PixelFormat>(_ image: UIImage,rotate90:Bool,convertPixel:(_ r
 			let b = data[byteIndex+blueIndex]
 			let a = data[byteIndex+alphaIndex]
 			
-			let pixel = convertPixel(r,g,b,a)
+			//let pixel = convertPixel(r,g,b,a)
+			let luma = (Double(r)+Double(g)) / (255.0*2.0)
+			let pixel = getCorrectedLuma(luma: luma)
+			
 			row.append(pixel)
 		}
 		rows.append(row)
@@ -132,16 +147,8 @@ public func imageToPixelsLuma(_ image: UIImage,rotate90:Bool=false,fourBitHistog
 {
 	func getCorrectedLuma(luma:Double) -> UInt8
 	{
-		let curvedValue = fourBitHistogram.value(at: luma)
-		if curvedValue >= 1.0
-		{
-			return 0xff
-		}
-		if curvedValue <= 0.0
-		{
-			return 0x0
-		}
-		//let clampedCurvedValue = min( 1.0, max( 0.0, curvedValue ) )
+		var curvedValue = fourBitHistogram.value(at: luma)
+		curvedValue = min( 1.0, max( 0.0, curvedValue ) )
 		//	as we're clamping the float to 1.0 - we have to be careful not to exceed 255
 		let curvedLuma = UInt8( curvedValue * Double(0xff) )
 		return curvedLuma
@@ -152,7 +159,8 @@ public func imageToPixelsLuma(_ image: UIImage,rotate90:Bool=false,fourBitHistog
 		r,g,b,a in
 		//let brightness = (Double(r)+Double(g)+Double(b)) / (255.0*3.0)
 		let luma = (Double(r)+Double(g)) / (255.0*2.0)
-		let curvedLuma = getCorrectedLuma(luma: luma)
+		//let curvedLuma = getCorrectedLuma(luma: luma)
+		let curvedLuma = UInt8(luma)
 		return curvedLuma
 	}
 	return output

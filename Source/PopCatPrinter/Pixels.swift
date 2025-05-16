@@ -199,8 +199,9 @@ extension CGImage
 		let flags = vImage_Flags(kvImageNoFlags)
 
 		//	its not documented, but rotating image... mirrors it... 
+		//	gr: no it doesnt :) was error in pipeline
 		let rotateError = vImageRotate_ARGB8888(&src, &dst, nil, radians, bgColor, flags)
-		let mirrorError = vImageHorizontalReflect_ARGB8888( &dst, &dst, flags)
+		//let mirrorError = vImageHorizontalReflect_ARGB8888( &dst, &dst, flags)
 		
 		guard let rotImage = rotContext.makeImage() else
 		{
